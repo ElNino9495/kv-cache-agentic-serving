@@ -28,8 +28,8 @@ We propose a **speculative multi-rollout KV cache quantization** scheme:
 ```
 .
 ├── proposal/
-│   ├── proposal.tex        # proposal
-│   └── references.bib      # bibliography stub — fill in real fields
+│   ├── proposal.tex        
+│   └── references.bib      
 ├── src/
 │   ├── baseline_experiment.py   # Phase 0: profile vanilla HF KV cache under simulated agentic load
 │   └── plot_baseline.py         # plots memory/latency vs. context length from the baseline CSV
@@ -61,8 +61,24 @@ python src/baseline_experiment.py \
     --tool-outputs data/real_single_task.jsonl \
     --num-turns 126 --gen-len 64 --out results/baseline_real.csv
 
+!python src/plot_baseline.py --csv results/baseline_real.csv --out results/baseline_real_plot.png
+
+
+!python src/baseline_experiment.py \
+    --model meta-llama/Llama-3.2-1B-Instruct \
+    --tool-outputs data/real_alfworld.jsonl \
+    --num-turns 514 --gen-len 64 --out results/baseline_alfworld.csv
+!python src/plot_baseline.py --csv results/baseline_alfworld.csv --out results/baseline_alfworld_plot.png
+
 
 python src/plot_baseline.py --csv results/baseline.csv --out results/baseline_plot.png
+
+!python src/baseline_experiment.py \
+    --model meta-llama/Llama-3.2-1B-Instruct \
+    --tool-outputs data/real_single_task_sympy.jsonl \
+    --num-turns 108 --gen-len 64 --out results/baseline_sympy.csv
+!python src/plot_baseline.py --csv results/baseline_sympy.csv --out results/baseline_sympy_plot.png
+
 ```
 
 
