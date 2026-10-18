@@ -22,14 +22,13 @@ We propose a **speculative multi-rollout KV cache quantization** scheme:
 4. Keep high-consensus tokens (plus attention sinks / recent window) in
    FP16/BF16; quantize the rest to 4-bit or 2-bit.
 
-See [`proposal/proposal.tex`](proposal/proposal.tex) for the full writeup.
 
 ## Repo layout
 
 ```
 .
 ├── proposal/
-│   ├── proposal.tex        # team proposal (2-page, due Sept 30)
+│   ├── proposal.tex        # proposal
 │   └── references.bib      # bibliography stub — fill in real fields
 ├── src/
 │   ├── baseline_experiment.py   # Phase 0: profile vanilla HF KV cache under simulated agentic load
@@ -56,17 +55,15 @@ python src/baseline_experiment.py \
     --model meta-llama/Llama-3.2-1B-Instruct \
     --num-turns 5 --gen-len 16
 
-# real run once you have real trace data (same JSONL schema as data/sample_tool_outputs.jsonl)
-python src/baseline_experiment.py \
+
+!python src/baseline_experiment.py \
     --model meta-llama/Llama-3.2-1B-Instruct \
-    --tool-outputs data/your_real_traces.jsonl \
-    --num-turns 50 --gen-len 64 --out results/baseline.csv
+    --tool-outputs data/real_single_task.jsonl \
+    --num-turns 126 --gen-len 64 --out results/baseline_real.csv
+
 
 python src/plot_baseline.py --csv results/baseline.csv --out results/baseline_plot.png
 ```
 
-## Milestones
 
-- **Sept 30** — 2-page proposal
-- **Nov 2/4** — midterm presentation
-- **Dec 17, 1:00 PM EST** — final report (8 pages) + code + README
+
