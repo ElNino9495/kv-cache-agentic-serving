@@ -81,20 +81,15 @@ python src/plot_baseline.py --csv results/baseline.csv --out results/baseline_pl
 
 ```
 
-\section{Phase 1: Real-Trace Baseline and Consensus Scoring}
+## Phase 1: real-trace baseline + consensus scoring
 
-All Phase 1 code, the Colab notebook, results and graphs are in the \texttt{phase1/} folder.
+All Phase 1 code, the Colab notebook, results and graphs are in the `Phase1/` folder (see its README).
 
-\begin{itemize}
-    \item \textbf{Exp 1:} Replayed 10 new SWE-bench trajectories (18k--56k tokens) with the full
-    conversation in context (task, agent messages and tool outputs). The KV cache is 32\,KB/token
-    (1.7\,GB at 56k tokens), decode drops from $\sim$42 to $\sim$3--9 tok/s, and reserved memory
-    fills the GPU ($\sim$14\,GB) while only $\sim$4\,GB is used. The Phase 0 method on the same
-    trajectory gives $\sim$12\% less context at the same speed.
-
-    \item \textbf{Exp 2:} Proof-of-concept of consensus scoring. Draft guesses find $\sim$52\% of
-    the truly needed tokens (SnapKV-style 32\%, random 10\%). Quantizing the rest to 2-bit does
-    7--18$\times$ less damage than evicting it. With 4--8 guesses and the top 10--20\% kept in FP16,
-    quality loss is near zero at a $\sim$3--5$\times$ smaller cache.
-\end{itemize}
-
+- **Exp 1:** Replayed 10 new SWE-bench trajectories (18k–56k tokens) with the full conversation in
+  context (task + agent messages + tool outputs). The KV cache is 32 KB/token (1.7 GB at 56k tokens),
+  decode drops from ~42 to ~3–9 tok/s, and reserved memory fills the GPU (~14 GB) while only ~4 GB is
+  used. The Phase 0 method on the same trajectory gives ~12% less context at the same speed.
+- **Exp 2:** Proof-of-concept of consensus scoring. Draft guesses find ~52% of the truly needed
+  tokens (SnapKV-style 32%, random 10%). Quantizing the rest to 2-bit does 7–18× less damage than
+  evicting it. With 4–8 guesses and the top 10–20% kept in FP16, quality loss is near zero at a
+  ~3–5× smaller cache.
