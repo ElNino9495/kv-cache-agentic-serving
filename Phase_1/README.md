@@ -1,4 +1,4 @@
-# Speculative KV Cache Quantization for Agentic Serving: Experiments (Part 0 and Part 1)
+# Speculative KV Cache Quantization for Agentic Serving: Experiments (Part 1)
 
 ## 1. The project in one paragraph
 
@@ -223,8 +223,6 @@ message (up to 256 tokens) is the "target" used to measure damage.
 
 ### Graph 1: KV cache size and memory breakdown (`exp1_memory.png`)
 
-![KV cache size and memory breakdown](kv_cache_results/exp1/exp1_memory.png)
-
 **Left panel: KV cache size, all 10 recordings.** The x-axis is context length (thousand tokens); the y-axis is KV
 cache size (GB) measured from the cache tensors. Each dot is one turn, and the dashed line is the theoretical value.
 
@@ -246,7 +244,6 @@ memory (weights + cache, i.e. memory actually in use), and green is memory reser
 
 ### Graph 2: decode speed and prefill cost (`exp1_latency.png`)
 
-![Decode speed and prefill cost](kv_cache_results/exp1/exp1_latency.png)
 
 **Left panel: decode speed.** The x-axis is context length; the y-axis is tokens generated per second.
 
@@ -266,8 +263,6 @@ smaller chunks give noisy numbers.
 
 ### Graph 3: GPU memory per recording (`exp1_per_recording.png`)
 
-![GPU memory per recording](kv_cache_results/exp1/exp1_per_recording.png)
-
 There is one panel per recording, all on the same scale, with the same colours as Graph 1 (right).
 
 - **Blue (KV cache) and orange (allocated) are straight lines with the same slope in all 10 panels.** Recordings
@@ -282,8 +277,6 @@ There is one panel per recording, all on the same scale, with the same colours a
   conversation gets longer.
 
 ### Graph 4: full recording vs the Part 0 method (`exp1_replay_vs_part0.png`)
-
-![Full recording vs Part 0 method](kv_cache_results/exp1/exp1_replay_vs_part0.png)
 
 Both lines come from the same recording (django-11265). Blue is the full recording (1a); orange is the Part 0
 method (1b).
@@ -357,7 +350,6 @@ The end speeds differ only because 1a ends at a longer context; at the same leng
 
 ### Graph 5: which tokens to keep? (`exp2_quality_vs_keep.png`), the main result
 
-![Quality vs keep fraction](kv_cache_results/exp2/exp2_quality_vs_keep.png)
 
 The x-axis is the % of middle tokens kept at full precision; the y-axis is Δ NLL. Error bars show mean ± standard
 error over 12 contexts. **The two panels use very different y-scales** (about 0.1 vs about 1.2).
@@ -387,8 +379,6 @@ proposal: **quantize instead of evicting**.
 
 ### Graph 6: do more draft guesses help? (`exp2_n_sweep.png`)
 
-![N sweep](kv_cache_results/exp2/exp2_n_sweep.png)
-
 The x-axis is the number of sampled draft guesses N (1, 2, 4, 8); the y-axis is Δ NLL. **Here the line colours mean
 keep levels, not methods:** blue = keep 5%, orange = keep 10%, green = keep 20%.
 
@@ -400,8 +390,6 @@ keep levels, not methods:** blue = keep 5%, orange = keep 10%, green = keep 20%.
   zero, so N barely matters. N = 4–8 is a sensible choice, which matches the proposal.
 
 ### Graph 7: how many of the truly needed tokens does each method find? (`exp2_recall.png`)
-
-![Recall of the oracle's top tokens](kv_cache_results/exp2/exp2_recall.png)
 
 "Truly needed" means the oracle's top tokens, the ones the real next message attended to most. Each bar is the share
 of those a method also picked.
@@ -423,8 +411,6 @@ of those a method also picked.
 - **Meaning:** this is the clearest evidence that **looking ahead with draft guesses finds the important tokens**.
 
 ### Graph 8: where attention lands (`exp2_score_profile.png`)
-
-![Score profile](kv_cache_results/exp2/exp2_score_profile.png)
 
 This graph shows one context from sphinx-8548, about 5,000 tokens long. The x-axis is token position; the y-axis is
 the importance score. Background colours: yellow = task, green = agent messages, pink = tool outputs. The top panel is
