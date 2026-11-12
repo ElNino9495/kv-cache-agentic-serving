@@ -1,0 +1,35 @@
+{
+  "model": "unsloth/Llama-3.2-1B-Instruct",
+  "data_dir": "data/replay",
+  "instances": [
+    "django__django-11265",
+    "sympy__sympy-12419",
+    "sphinx-doc__sphinx-8548"
+  ],
+  "context_lens": [
+    2000,
+    3000,
+    4000,
+    5000
+  ],
+  "report_len": 4000,
+  "max_target_tokens": 256,
+  "horizon": 10,
+  "max_n": 8,
+  "temperature": 1.0,
+  "top_p": 0.95,
+  "keep_fracs": [
+    0.05,
+    0.1,
+    0.2,
+    0.4
+  ],
+  "sinks": 4,
+  "recent": 64,
+  "snap_window": 32,
+  "bits": 2,
+  "dtype": "auto",
+  "seed": 0,
+  "out_dir": "results/exp2",
+  "resume": true
+}
