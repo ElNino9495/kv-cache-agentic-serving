@@ -1,8 +1,8 @@
 # Speculative KV Cache Quantization for Agentic Serving
 
-CSE 585 course project (Fall 2026, University of Michigan).
-
-**Team:** Arihan Iyer, Kushagra Mishra, Jatin Shihora, Rohit Puthucode
+> **New here? Start with [docs/](docs/README.md).** It explains the problem, the idea, goals, phases and
+> benchmarks from scratch. The summary below is the original proposal; the project has since moved to
+> draft-guided precision for reloading KV after agent tool calls ([docs/02-idea.md](docs/02-idea.md)).
 
 ## Project summary
 
@@ -36,8 +36,31 @@ We propose a **speculative multi-rollout KV cache quantization** scheme:
 ├── data/
 │   └── sample_tool_outputs.jsonl  # example trace schema — replace with real SWE-bench/BFCL traces
 ├── results/                # baseline_experiment.py output lands here (gitignored)
+├── docs/                   # project documentation: problem, idea, goals, phases, benchmarks, architecture
+├── kv_manager/             # new idea: draft-guided precision for KV reload after tool pauses (vLLM 0.27.1); see its README
 └── requirements.txt
 ```
+
+## Learnings commit hook
+
+Write new entries at the top of [learnings/learnings.txt](learnings/learnings.txt),
+above any existing separator, then stage the file normally.
+Enable the repository's pre-commit hook once per clone:
+
+```bash
+git config --local core.hooksPath .githooks
+```
+
+When staged learnings contain additions or edits, the hook prepends a line of
+exactly 100 hyphens and stages that separator in the same commit. It leaves
+unchanged, empty, whitespace-only, and deletion-only changes alone. If the
+first line is already the separator, it does not add another one.
+Unstaged/untracked learnings are never automatically included. When formatting
+is needed, partially staged learnings block the commit: stage all changes to
+that file or stash its unstaged edits and retry. The hook does not reorder entries.
+
+Run the isolated hook tests with `sh tests/test-pre-commit.sh`.
+To disable the hook, run `git config --local --unset core.hooksPath`.
 
 ## Phase 0: baseline
 
