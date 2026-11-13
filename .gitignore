@@ -12,3 +12,4 @@ __pycache__/
 /kv_manager/envt/.uv-cache/
 /kv_manager/data/
 .DS_Store
+/kv_manager/.gate-venv/

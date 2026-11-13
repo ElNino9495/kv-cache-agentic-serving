@@ -67,7 +67,13 @@ def main():
         fig.savefig(out / f"pareto_B{B}.png", dpi=150)
         plt.close(fig)
 
-        lines += [f"## Block size {B}", "",
+        lines += [f"## Block size {B}", ""]
+        ctrl = g[g.method == "uniform_bf16"]
+        if len(ctrl):
+            worst = ctrl.delta_nll.abs().max()
+            lines += [f"Control uniform_bf16 (lossless reload): max |dNLL| {worst:.2e} "
+                      f"({'OK' if worst < 1e-6 else 'NONZERO: reference and schemes are not computed identically'})", ""]
+        lines += [
                   f"uniform_int4: bytes {u4_bytes:.3f}, dNLL {u4.delta_nll.mean():+.4f}, "
                   f"top-1 {u4.top1_agree.mean():.3f}  |  uniform_int2: bytes "
                   f"{g[g.method == 'uniform_int2'].bytes_frac.mean():.3f}, dNLL "

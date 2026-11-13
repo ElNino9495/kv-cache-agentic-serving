@@ -1,0 +1,323 @@
+name, memory.total [MiB], driver_version
+NVIDIA A40, 46068 MiB, 595.71.05
+loading unsloth/Llama-3.1-8B-Instruct and unsloth/Llama-3.2-1B-Instruct
+Loading weights:   0%|          | 0/291 [00:00<?, ?it/s]Loading weights: 100%|██████████| 291/291 [00:00<00:00, 25928.72it/s]
+Loading weights:   0%|          | 0/146 [00:00<?, ?it/s]Loading weights:  68%|██████▊   | 99/146 [00:00<00:00, 974.40it/s]Loading weights: 100%|██████████| 146/146 [00:00<00:00, 1072.96it/s]
+
+sphinx-doc__sphinx-8548 turn 10: history 4227, tool output 379, target 52 tokens
+  ref NLL 0.319 | draft scoring: window 177 ms, specprefill 545 ms, consensus 701 ms
+  B=16: uniform_int4 dNLL +0.0017 @ 0.33 | consensus bf16 10% dNLL +0.0162 @ 0.29
+  B=64: uniform_int4 dNLL -0.0024 @ 0.30 | consensus bf16 10% dNLL +0.0039 @ 0.25
+loading unsloth/Llama-3.1-8B-Instruct and unsloth/Llama-3.2-1B-Instruct
+Loading weights:   0%|          | 0/291 [00:00<?, ?it/s]Loading weights: 100%|██████████| 291/291 [00:00<00:00, 27083.44it/s]
+Loading weights:   0%|          | 0/146 [00:00<?, ?it/s]Loading weights: 100%|██████████| 146/146 [00:00<00:00, 28672.96it/s]
+
+sphinx-doc__sphinx-8548 turn 23: history 8523, tool output 73, target 48 tokens
+  ref NLL 0.387 | draft scoring: window 63 ms, specprefill 282 ms, consensus 475 ms
+  B=16: uniform_int4 dNLL +0.0021 @ 0.33 | consensus bf16 10% dNLL +0.0348 @ 0.28
+  B=64: uniform_int4 dNLL +0.0018 @ 0.29 | consensus bf16 10% dNLL +0.0064 @ 0.25
+
+sphinx-doc__sphinx-8548 turn 50: history 18627, tool output 604, target 27 tokens
+  ref NLL 0.931 | draft scoring: window 118 ms, specprefill 285 ms, consensus 844 ms
+  B=16: uniform_int4 dNLL -0.0002 @ 0.32 | consensus bf16 10% dNLL +0.0832 @ 0.28
+  B=64: uniform_int4 dNLL -0.0079 @ 0.28 | consensus bf16 10% dNLL +0.1032 @ 0.24
+
+sphinx-doc__sphinx-8548 turn 66: history 25528, tool output 57, target 49 tokens
+  ref NLL 0.424 | draft scoring: window 121 ms, specprefill 333 ms, consensus 1115 ms
+  B=16: uniform_int4 dNLL -0.0052 @ 0.32 | consensus bf16 10% dNLL +0.0030 @ 0.28
+  B=64: uniform_int4 dNLL +0.0052 @ 0.28 | consensus bf16 10% dNLL +0.0014 @ 0.24
+
+sphinx-doc__sphinx-8548 turn 76: history 32027, tool output 478, target 38 tokens
+  ref NLL 0.535 | draft scoring: window 183 ms, specprefill 451 ms, consensus 1497 ms
+  B=16: uniform_int4 dNLL +0.0003 @ 0.32 | consensus bf16 10% dNLL +0.0153 @ 0.28
+  B=64: uniform_int4 dNLL +0.0041 @ 0.28 | consensus bf16 10% dNLL -0.0003 @ 0.24
+
+django__django-11265 turn 19: history 8925, tool output 285, target 23 tokens
+  ref NLL 1.219 | draft scoring: window 55 ms, specprefill 207 ms, consensus 418 ms
+  B=16: uniform_int4 dNLL +0.0212 @ 0.33 | consensus bf16 10% dNLL +0.0297 @ 0.28
+  B=64: uniform_int4 dNLL +0.0251 @ 0.29 | consensus bf16 10% dNLL +0.0557 @ 0.25
+
+django__django-11265 turn 40: history 16037, tool output 267, target 240 tokens
+  ref NLL 0.388 | draft scoring: window 81 ms, specprefill 236 ms, consensus 688 ms
+  B=16: uniform_int4 dNLL +0.0014 @ 0.32 | consensus bf16 10% dNLL +0.0215 @ 0.28
+  B=64: uniform_int4 dNLL +0.0030 @ 0.28 | consensus bf16 10% dNLL +0.0359 @ 0.24
+
+django__django-11265 turn 58: history 26498, tool output 25, target 32 tokens
+  ref NLL 0.613 | draft scoring: window 66 ms, specprefill 286 ms, consensus 1107 ms
+  B=16: uniform_int4 dNLL +0.0043 @ 0.32 | consensus bf16 10% dNLL +0.0096 @ 0.28
+  B=64: uniform_int4 dNLL -0.0021 @ 0.28 | consensus bf16 10% dNLL +0.0274 @ 0.24
+
+django__django-11265 turn 64: history 32175, tool output 310, target 36 tokens
+  ref NLL 0.420 | draft scoring: window 165 ms, specprefill 433 ms, consensus 1480 ms
+  B=16: uniform_int4 dNLL -0.0034 @ 0.32 | consensus bf16 10% dNLL -0.0141 @ 0.28
+  B=64: uniform_int4 dNLL +0.0174 @ 0.28 | consensus bf16 10% dNLL -0.0020 @ 0.24
+
+sympy__sympy-12419 turn 23: history 8182, tool output 28, target 24 tokens
+  ref NLL 0.932 | draft scoring: window 25 ms, specprefill 175 ms, consensus 356 ms
+  B=16: uniform_int4 dNLL +0.0039 @ 0.33 | consensus bf16 10% dNLL -0.0146 @ 0.28
+  B=64: uniform_int4 dNLL +0.0253 @ 0.29 | consensus bf16 10% dNLL +0.0506 @ 0.25
+
+sympy__sympy-12419 turn 39: history 17042, tool output 245, target 26 tokens
+  ref NLL 0.491 | draft scoring: window 90 ms, specprefill 246 ms, consensus 736 ms
+  B=16: uniform_int4 dNLL -0.0259 @ 0.32 | consensus bf16 10% dNLL +0.0653 @ 0.28
+  B=64: uniform_int4 dNLL -0.0146 @ 0.28 | consensus bf16 10% dNLL +0.1165 @ 0.24
+
+sympy__sympy-12419 turn 58: history 24030, tool output 186, target 256 tokens
+  ref NLL 0.711 | draft scoring: window 116 ms, specprefill 319 ms, consensus 1059 ms
+  B=16: uniform_int4 dNLL -0.0023 @ 0.32 | consensus bf16 10% dNLL +0.0106 @ 0.28
+  B=64: uniform_int4 dNLL +0.0023 @ 0.28 | consensus bf16 10% dNLL +0.0179 @ 0.24
+
+sympy__sympy-12419 turn 72: history 33844, tool output 2901, target 34 tokens
+  ref NLL 0.587 | draft scoring: window 834 ms, specprefill 1131 ms, consensus 2312 ms
+  B=16: uniform_int4 dNLL +0.0086 @ 0.32 | consensus bf16 10% dNLL +0.0127 @ 0.28
+  B=64: uniform_int4 dNLL +0.0061 @ 0.28 | consensus bf16 10% dNLL +0.0378 @ 0.24
+
+astropy__astropy-13398 turn 11: history 8542, tool output 657, target 50 tokens
+  ref NLL 1.095 | draft scoring: window 73 ms, specprefill 231 ms, consensus 435 ms
+  B=16: uniform_int4 dNLL -0.0192 @ 0.33 | consensus bf16 10% dNLL -0.0278 @ 0.28
+  B=64: uniform_int4 dNLL -0.0020 @ 0.29 | consensus bf16 10% dNLL -0.0415 @ 0.25
+
+astropy__astropy-13398 turn 28: history 16215, tool output 150, target 49 tokens
+  ref NLL 0.599 | draft scoring: window 81 ms, specprefill 241 ms, consensus 696 ms
+  B=16: uniform_int4 dNLL +0.0064 @ 0.32 | consensus bf16 10% dNLL -0.0092 @ 0.28
+  B=64: uniform_int4 dNLL +0.0140 @ 0.28 | consensus bf16 10% dNLL +0.0917 @ 0.24
+
+astropy__astropy-13398 turn 43: history 25561, tool output 33, target 51 tokens
+  ref NLL 1.108 | draft scoring: window 91 ms, specprefill 304 ms, consensus 1086 ms
+  B=16: uniform_int4 dNLL -0.0144 @ 0.32 | consensus bf16 10% dNLL +0.0177 @ 0.28
+  B=64: uniform_int4 dNLL +0.0027 @ 0.28 | consensus bf16 10% dNLL -0.0288 @ 0.24
+
+pytest-dev__pytest-5787 turn 12: history 8268, tool output 66, target 41 tokens
+  ref NLL 0.189 | draft scoring: window 46 ms, specprefill 201 ms, consensus 379 ms
+  B=16: uniform_int4 dNLL -0.0053 @ 0.33 | consensus bf16 10% dNLL +0.0012 @ 0.28
+  B=64: uniform_int4 dNLL +0.0066 @ 0.29 | consensus bf16 10% dNLL +0.0356 @ 0.25
+
+pytest-dev__pytest-5787 turn 28: history 16854, tool output 33, target 256 tokens
+  ref NLL 0.355 | draft scoring: window 62 ms, specprefill 222 ms, consensus 694 ms
+  B=16: uniform_int4 dNLL -0.0005 @ 0.32 | consensus bf16 10% dNLL +0.0069 @ 0.28
+  B=64: uniform_int4 dNLL -0.0050 @ 0.28 | consensus bf16 10% dNLL +0.0268 @ 0.24
+
+pytest-dev__pytest-5787 turn 35: history 24021, tool output 120, target 256 tokens
+  ref NLL 0.950 | draft scoring: window 115 ms, specprefill 318 ms, consensus 1054 ms
+  B=16: uniform_int4 dNLL +0.0019 @ 0.32 | consensus bf16 10% dNLL +0.0057 @ 0.28
+  B=64: uniform_int4 dNLL -0.0021 @ 0.28 | consensus bf16 10% dNLL -0.0054 @ 0.24
+
+pydata__xarray-4687 turn 17: history 8305, tool output 33, target 39 tokens
+  ref NLL 0.148 | draft scoring: window 41 ms, specprefill 196 ms, consensus 377 ms
+  B=16: uniform_int4 dNLL +0.0005 @ 0.33 | consensus bf16 10% dNLL +0.0057 @ 0.28
+  B=64: uniform_int4 dNLL +0.0038 @ 0.29 | consensus bf16 10% dNLL +0.0174 @ 0.25
+
+pydata__xarray-4687 turn 44: history 16198, tool output 34, target 256 tokens
+  ref NLL 0.606 | draft scoring: window 219 ms, specprefill 378 ms, consensus 824 ms
+  B=16: uniform_int4 dNLL -0.0006 @ 0.32 | consensus bf16 10% dNLL +0.0019 @ 0.28
+  B=64: uniform_int4 dNLL +0.0027 @ 0.28 | consensus bf16 10% dNLL -0.0004 @ 0.24
+
+pydata__xarray-4687 turn 65: history 24652, tool output 95, target 256 tokens
+  ref NLL 0.194 | draft scoring: window 118 ms, specprefill 326 ms, consensus 1081 ms
+  B=16: uniform_int4 dNLL +0.0002 @ 0.32 | consensus bf16 10% dNLL -0.0004 @ 0.28
+  B=64: uniform_int4 dNLL +0.0002 @ 0.28 | consensus bf16 10% dNLL +0.0121 @ 0.24
+
+pydata__xarray-4687 turn 85: history 32285, tool output 739, target 26 tokens
+  ref NLL 0.744 | draft scoring: window 232 ms, specprefill 505 ms, consensus 1568 ms
+  B=16: uniform_int4 dNLL +0.0186 @ 0.32 | consensus bf16 10% dNLL -0.0337 @ 0.28
+  B=64: uniform_int4 dNLL -0.0192 @ 0.28 | consensus bf16 10% dNLL +0.0291 @ 0.24
+
+mwaskom__seaborn-3069 turn 23: history 8089, tool output 161, target 41 tokens
+  ref NLL 0.230 | draft scoring: window 53 ms, specprefill 208 ms, consensus 386 ms
+  B=16: uniform_int4 dNLL +0.0087 @ 0.33 | consensus bf16 10% dNLL +0.0201 @ 0.28
+  B=64: uniform_int4 dNLL +0.0032 @ 0.29 | consensus bf16 10% dNLL +0.0137 @ 0.25
+
+mwaskom__seaborn-3069 turn 43: history 16063, tool output 100, target 43 tokens
+  ref NLL 0.207 | draft scoring: window 81 ms, specprefill 237 ms, consensus 682 ms
+  B=16: uniform_int4 dNLL +0.0014 @ 0.32 | consensus bf16 10% dNLL +0.0177 @ 0.28
+  B=64: uniform_int4 dNLL +0.0066 @ 0.28 | consensus bf16 10% dNLL +0.0445 @ 0.24
+
+mwaskom__seaborn-3069 turn 67: history 24577, tool output 30, target 30 tokens
+  ref NLL 1.255 | draft scoring: window 67 ms, specprefill 273 ms, consensus 1033 ms
+  B=16: uniform_int4 dNLL +0.0133 @ 0.32 | consensus bf16 10% dNLL +0.0269 @ 0.28
+  B=64: uniform_int4 dNLL +0.0174 @ 0.28 | consensus bf16 10% dNLL +0.0008 @ 0.24
+
+psf__requests-2931 turn 21: history 8425, tool output 858, target 65 tokens
+  ref NLL 1.069 | draft scoring: window 90 ms, specprefill 247 ms, consensus 456 ms
+  B=16: uniform_int4 dNLL +0.0019 @ 0.33 | consensus bf16 10% dNLL -0.0081 @ 0.28
+  B=64: uniform_int4 dNLL -0.0041 @ 0.29 | consensus bf16 10% dNLL +0.0517 @ 0.25
+
+psf__requests-2931 turn 43: history 16625, tool output 101, target 30 tokens
+  ref NLL 1.458 | draft scoring: window 76 ms, specprefill 235 ms, consensus 701 ms
+  B=16: uniform_int4 dNLL -0.0040 @ 0.32 | consensus bf16 10% dNLL -0.0070 @ 0.28
+  B=64: uniform_int4 dNLL -0.0040 @ 0.28 | consensus bf16 10% dNLL -0.0098 @ 0.24
+
+scikit-learn__scikit-learn-11310 turn 22: history 8058, tool output 332, target 21 tokens
+  ref NLL 0.450 | draft scoring: window 54 ms, specprefill 209 ms, consensus 391 ms
+  B=16: uniform_int4 dNLL -0.0009 @ 0.33 | consensus bf16 10% dNLL +0.0145 @ 0.28
+  B=64: uniform_int4 dNLL -0.0049 @ 0.29 | consensus bf16 10% dNLL +0.0602 @ 0.25
+
+scikit-learn__scikit-learn-11310 turn 50: history 16064, tool output 108, target 51 tokens
+  ref NLL 0.178 | draft scoring: window 76 ms, specprefill 234 ms, consensus 678 ms
+  B=16: uniform_int4 dNLL -0.0014 @ 0.32 | consensus bf16 10% dNLL -0.0016 @ 0.28
+  B=64: uniform_int4 dNLL -0.0009 @ 0.28 | consensus bf16 10% dNLL +0.0374 @ 0.24
+
+pallets__flask-5014 turn 22: history 8014, tool output 357, target 41 tokens
+  ref NLL 0.684 | draft scoring: window 60 ms, specprefill 215 ms, consensus 396 ms
+  B=16: uniform_int4 dNLL +0.0089 @ 0.33 | consensus bf16 10% dNLL +0.0079 @ 0.29
+  B=64: uniform_int4 dNLL +0.0144 @ 0.29 | consensus bf16 10% dNLL -0.0667 @ 0.25
+
+pallets__flask-5014 turn 38: history 17955, tool output 33, target 20 tokens
+  ref NLL 0.568 | draft scoring: window 59 ms, specprefill 218 ms, consensus 731 ms
+  B=16: uniform_int4 dNLL +0.0070 @ 0.32 | consensus bf16 10% dNLL -0.0142 @ 0.28
+  B=64: uniform_int4 dNLL +0.0127 @ 0.28 | consensus bf16 10% dNLL +0.0766 @ 0.24
+# Gate experiment summary
+
+31 samples. dNLL is in nats per target token (0 = identical to bf16 reload). bytes = reload bytes / bf16 reload bytes.
+
+## Block size 16
+
+Control uniform_bf16 (lossless reload): max |dNLL| 0.00e+00 (OK)
+
+uniform_int4: bytes 0.325, dNLL +0.0009, top-1 0.991  |  uniform_int2: bytes 0.200, dNLL +0.0332
+
+| method | hi | keep | bytes | dNLL | top-1 | recall | dNLL - uniform_int4 [95% CI] | passes |
+|---|---|---|---|---|---|---|---|---|
+| consensus | bf16 | 0.05 | 0.240 | +0.0129 | 0.970 | 0.46 | +0.0120 [+0.0053, +0.0189] |  |
+| consensus | bf16 | 0.1 | 0.280 | +0.0091 | 0.975 | 0.58 | +0.0082 [-0.0004, +0.0177] |  |
+| consensus | bf16 | 0.2 | 0.360 | +0.0065 | 0.980 | 0.63 | +0.0056 [-0.0031, +0.0137] |  |
+| consensus | bf16 | 0.4 | 0.520 | +0.0060 | 0.986 | 0.69 | +0.0051 [-0.0015, +0.0118] |  |
+| consensus | int4 | 0.05 | 0.207 | +0.0151 | 0.970 | 0.46 | +0.0142 [+0.0071, +0.0217] |  |
+| consensus | int4 | 0.1 | 0.213 | +0.0122 | 0.972 | 0.58 | +0.0114 [+0.0035, +0.0209] |  |
+| consensus | int4 | 0.2 | 0.225 | +0.0118 | 0.980 | 0.63 | +0.0109 [+0.0046, +0.0184] |  |
+| consensus | int4 | 0.4 | 0.250 | +0.0057 | 0.988 | 0.69 | +0.0048 [-0.0012, +0.0111] |  |
+| draft_window | bf16 | 0.05 | 0.240 | +0.0176 | 0.967 | 0.36 | +0.0168 [+0.0095, +0.0248] |  |
+| draft_window | bf16 | 0.1 | 0.280 | +0.0140 | 0.970 | 0.44 | +0.0131 [+0.0060, +0.0219] |  |
+| draft_window | bf16 | 0.2 | 0.360 | +0.0048 | 0.974 | 0.54 | +0.0039 [-0.0062, +0.0139] |  |
+| draft_window | bf16 | 0.4 | 0.520 | +0.0055 | 0.979 | 0.64 | +0.0046 [-0.0044, +0.0135] |  |
+| draft_window | int4 | 0.05 | 0.207 | +0.0186 | 0.965 | 0.36 | +0.0177 [+0.0100, +0.0263] |  |
+| draft_window | int4 | 0.1 | 0.213 | +0.0161 | 0.974 | 0.44 | +0.0152 [+0.0078, +0.0235] |  |
+| draft_window | int4 | 0.2 | 0.225 | +0.0058 | 0.973 | 0.54 | +0.0049 [-0.0051, +0.0141] |  |
+| draft_window | int4 | 0.4 | 0.250 | +0.0047 | 0.983 | 0.64 | +0.0038 [-0.0048, +0.0118] |  |
+| oracle | bf16 | 0.05 | 0.240 | +0.0187 | 0.974 | 1.00 | +0.0178 [+0.0088, +0.0279] |  |
+| oracle | bf16 | 0.1 | 0.280 | +0.0154 | 0.979 | 1.00 | +0.0145 [+0.0078, +0.0215] |  |
+| oracle | bf16 | 0.2 | 0.360 | +0.0130 | 0.986 | 1.00 | +0.0122 [+0.0062, +0.0187] |  |
+| oracle | bf16 | 0.4 | 0.520 | +0.0064 | 0.994 | 1.00 | +0.0055 [+0.0018, +0.0100] |  |
+| oracle | int4 | 0.05 | 0.207 | +0.0210 | 0.975 | 1.00 | +0.0201 [+0.0117, +0.0296] |  |
+| oracle | int4 | 0.1 | 0.213 | +0.0169 | 0.980 | 1.00 | +0.0160 [+0.0092, +0.0231] |  |
+| oracle | int4 | 0.2 | 0.225 | +0.0123 | 0.985 | 1.00 | +0.0114 [+0.0053, +0.0177] |  |
+| oracle | int4 | 0.4 | 0.250 | +0.0055 | 0.991 | 1.00 | +0.0046 [+0.0018, +0.0078] |  |
+| random | bf16 | 0.05 | 0.240 | +0.0304 | 0.963 | 0.05 | +0.0295 [+0.0155, +0.0459] |  |
+| random | bf16 | 0.1 | 0.280 | +0.0296 | 0.963 | 0.10 | +0.0287 [+0.0159, +0.0433] |  |
+| random | bf16 | 0.2 | 0.360 | +0.0249 | 0.961 | 0.20 | +0.0240 [+0.0120, +0.0383] |  |
+| random | bf16 | 0.4 | 0.520 | +0.0193 | 0.966 | 0.41 | +0.0185 [+0.0065, +0.0331] |  |
+| random | int4 | 0.05 | 0.207 | +0.0310 | 0.963 | 0.05 | +0.0301 [+0.0154, +0.0478] |  |
+| random | int4 | 0.1 | 0.213 | +0.0302 | 0.962 | 0.10 | +0.0293 [+0.0162, +0.0441] |  |
+| random | int4 | 0.2 | 0.225 | +0.0263 | 0.961 | 0.20 | +0.0255 [+0.0124, +0.0412] |  |
+| random | int4 | 0.4 | 0.250 | +0.0210 | 0.965 | 0.41 | +0.0202 [+0.0072, +0.0355] |  |
+| recency | bf16 | 0.05 | 0.240 | +0.0226 | 0.961 | 0.15 | +0.0217 [+0.0126, +0.0313] |  |
+| recency | bf16 | 0.1 | 0.280 | +0.0183 | 0.966 | 0.22 | +0.0174 [+0.0084, +0.0270] |  |
+| recency | bf16 | 0.2 | 0.360 | +0.0185 | 0.967 | 0.33 | +0.0177 [+0.0108, +0.0254] |  |
+| recency | bf16 | 0.4 | 0.520 | +0.0078 | 0.973 | 0.50 | +0.0069 [-0.0022, +0.0148] |  |
+| recency | int4 | 0.05 | 0.207 | +0.0258 | 0.961 | 0.15 | +0.0249 [+0.0152, +0.0347] |  |
+| recency | int4 | 0.1 | 0.213 | +0.0215 | 0.968 | 0.22 | +0.0206 [+0.0110, +0.0304] |  |
+| recency | int4 | 0.2 | 0.225 | +0.0217 | 0.967 | 0.33 | +0.0208 [+0.0116, +0.0316] |  |
+| recency | int4 | 0.4 | 0.250 | +0.0075 | 0.973 | 0.50 | +0.0066 [-0.0026, +0.0150] |  |
+| specprefill | bf16 | 0.05 | 0.240 | +0.0173 | 0.971 | 0.45 | +0.0164 [+0.0070, +0.0283] |  |
+| specprefill | bf16 | 0.1 | 0.280 | +0.0079 | 0.979 | 0.55 | +0.0070 [-0.0018, +0.0151] |  |
+| specprefill | bf16 | 0.2 | 0.360 | +0.0085 | 0.979 | 0.60 | +0.0076 [+0.0003, +0.0151] |  |
+| specprefill | bf16 | 0.4 | 0.520 | +0.0042 | 0.989 | 0.67 | +0.0033 [-0.0052, +0.0101] |  |
+| specprefill | int4 | 0.05 | 0.207 | +0.0138 | 0.973 | 0.45 | +0.0129 [+0.0057, +0.0207] |  |
+| specprefill | int4 | 0.1 | 0.213 | +0.0086 | 0.981 | 0.55 | +0.0077 [-0.0000, +0.0150] |  |
+| specprefill | int4 | 0.2 | 0.225 | +0.0086 | 0.978 | 0.60 | +0.0077 [+0.0007, +0.0152] |  |
+| specprefill | int4 | 0.4 | 0.250 | +0.0052 | 0.989 | 0.67 | +0.0043 [-0.0039, +0.0112] |  |
+
+Consensus vs SpecPrefill scoring (B=16, negative = consensus better):
+
+| hi | keep | dNLL consensus - specprefill [95% CI] |
+|---|---|---|
+| bf16 | 0.05 | -0.0044 [-0.0150, +0.0032] |
+| bf16 | 0.1 | +0.0012 [-0.0023, +0.0050] |
+| bf16 | 0.2 | -0.0020 [-0.0054, +0.0013] |
+| bf16 | 0.4 | +0.0019 [-0.0021, +0.0074] |
+| int4 | 0.05 | +0.0014 [-0.0044, +0.0075] |
+| int4 | 0.1 | +0.0036 [-0.0025, +0.0115] |
+| int4 | 0.2 | +0.0032 [-0.0036, +0.0126] |
+| int4 | 0.4 | +0.0005 [-0.0038, +0.0059] |
+
+## Block size 64
+
+Control uniform_bf16 (lossless reload): max |dNLL| 0.00e+00 (OK)
+
+uniform_int4: bytes 0.282, dNLL +0.0035, top-1 0.984  |  uniform_int2: bytes 0.158, dNLL +0.0432
+
+| method | hi | keep | bytes | dNLL | top-1 | recall | dNLL - uniform_int4 [95% CI] | passes |
+|---|---|---|---|---|---|---|---|---|
+| consensus | bf16 | 0.05 | 0.200 | +0.0259 | 0.955 | 0.44 | +0.0224 [+0.0082, +0.0368] |  |
+| consensus | bf16 | 0.1 | 0.242 | +0.0257 | 0.958 | 0.55 | +0.0222 [+0.0078, +0.0374] |  |
+| consensus | bf16 | 0.2 | 0.326 | +0.0213 | 0.964 | 0.66 | +0.0178 [+0.0036, +0.0350] |  |
+| consensus | bf16 | 0.4 | 0.495 | +0.0162 | 0.975 | 0.74 | +0.0127 [+0.0026, +0.0251] |  |
+| consensus | int4 | 0.05 | 0.164 | +0.0273 | 0.953 | 0.44 | +0.0239 [+0.0093, +0.0382] |  |
+| consensus | int4 | 0.1 | 0.170 | +0.0276 | 0.958 | 0.55 | +0.0241 [+0.0089, +0.0402] |  |
+| consensus | int4 | 0.2 | 0.183 | +0.0222 | 0.964 | 0.66 | +0.0187 [+0.0058, +0.0344] |  |
+| consensus | int4 | 0.4 | 0.207 | +0.0187 | 0.967 | 0.74 | +0.0152 [+0.0049, +0.0280] |  |
+| draft_window | bf16 | 0.05 | 0.200 | +0.0416 | 0.950 | 0.37 | +0.0381 [+0.0213, +0.0560] |  |
+| draft_window | bf16 | 0.1 | 0.242 | +0.0314 | 0.953 | 0.48 | +0.0279 [+0.0116, +0.0459] |  |
+| draft_window | bf16 | 0.2 | 0.326 | +0.0233 | 0.963 | 0.56 | +0.0198 [+0.0042, +0.0382] |  |
+| draft_window | bf16 | 0.4 | 0.495 | +0.0115 | 0.967 | 0.67 | +0.0081 [-0.0045, +0.0214] |  |
+| draft_window | int4 | 0.05 | 0.164 | +0.0418 | 0.948 | 0.37 | +0.0383 [+0.0218, +0.0557] |  |
+| draft_window | int4 | 0.1 | 0.170 | +0.0323 | 0.956 | 0.48 | +0.0289 [+0.0131, +0.0460] |  |
+| draft_window | int4 | 0.2 | 0.183 | +0.0255 | 0.958 | 0.56 | +0.0220 [+0.0058, +0.0395] |  |
+| draft_window | int4 | 0.4 | 0.207 | +0.0157 | 0.966 | 0.67 | +0.0122 [-0.0006, +0.0255] |  |
+| oracle | bf16 | 0.05 | 0.200 | +0.0455 | 0.948 | 1.00 | +0.0420 [+0.0246, +0.0615] |  |
+| oracle | bf16 | 0.1 | 0.242 | +0.0409 | 0.960 | 1.00 | +0.0374 [+0.0239, +0.0532] |  |
+| oracle | bf16 | 0.2 | 0.326 | +0.0265 | 0.971 | 1.00 | +0.0230 [+0.0134, +0.0342] |  |
+| oracle | bf16 | 0.4 | 0.495 | +0.0114 | 0.978 | 1.00 | +0.0080 [+0.0021, +0.0147] |  |
+| oracle | int4 | 0.05 | 0.164 | +0.0454 | 0.951 | 1.00 | +0.0420 [+0.0257, +0.0600] |  |
+| oracle | int4 | 0.1 | 0.170 | +0.0426 | 0.961 | 1.00 | +0.0392 [+0.0258, +0.0545] |  |
+| oracle | int4 | 0.2 | 0.183 | +0.0292 | 0.969 | 1.00 | +0.0257 [+0.0160, +0.0364] |  |
+| oracle | int4 | 0.4 | 0.207 | +0.0130 | 0.973 | 1.00 | +0.0095 [+0.0048, +0.0147] |  |
+| random | bf16 | 0.05 | 0.200 | +0.0410 | 0.944 | 0.06 | +0.0376 [+0.0185, +0.0582] |  |
+| random | bf16 | 0.1 | 0.242 | +0.0416 | 0.944 | 0.10 | +0.0381 [+0.0200, +0.0587] |  |
+| random | bf16 | 0.2 | 0.326 | +0.0369 | 0.945 | 0.19 | +0.0334 [+0.0146, +0.0544] |  |
+| random | bf16 | 0.4 | 0.495 | +0.0230 | 0.944 | 0.41 | +0.0195 [+0.0042, +0.0354] |  |
+| random | int4 | 0.05 | 0.164 | +0.0414 | 0.942 | 0.06 | +0.0379 [+0.0186, +0.0593] |  |
+| random | int4 | 0.1 | 0.170 | +0.0423 | 0.944 | 0.10 | +0.0388 [+0.0200, +0.0597] |  |
+| random | int4 | 0.2 | 0.183 | +0.0391 | 0.942 | 0.19 | +0.0357 [+0.0171, +0.0568] |  |
+| random | int4 | 0.4 | 0.207 | +0.0252 | 0.951 | 0.41 | +0.0217 [+0.0063, +0.0386] |  |
+| recency | bf16 | 0.05 | 0.200 | +0.0366 | 0.949 | 0.18 | +0.0331 [+0.0156, +0.0501] |  |
+| recency | bf16 | 0.1 | 0.242 | +0.0315 | 0.948 | 0.25 | +0.0280 [+0.0114, +0.0430] |  |
+| recency | bf16 | 0.2 | 0.326 | +0.0357 | 0.946 | 0.34 | +0.0322 [+0.0150, +0.0522] |  |
+| recency | bf16 | 0.4 | 0.495 | +0.0232 | 0.955 | 0.50 | +0.0198 [+0.0064, +0.0352] |  |
+| recency | int4 | 0.05 | 0.164 | +0.0365 | 0.946 | 0.18 | +0.0331 [+0.0156, +0.0498] |  |
+| recency | int4 | 0.1 | 0.170 | +0.0318 | 0.949 | 0.25 | +0.0283 [+0.0115, +0.0433] |  |
+| recency | int4 | 0.2 | 0.183 | +0.0373 | 0.944 | 0.34 | +0.0338 [+0.0151, +0.0536] |  |
+| recency | int4 | 0.4 | 0.207 | +0.0258 | 0.951 | 0.50 | +0.0223 [+0.0083, +0.0377] |  |
+| specprefill | bf16 | 0.05 | 0.200 | +0.0295 | 0.949 | 0.43 | +0.0260 [+0.0100, +0.0421] |  |
+| specprefill | bf16 | 0.1 | 0.242 | +0.0312 | 0.950 | 0.55 | +0.0277 [+0.0094, +0.0478] |  |
+| specprefill | bf16 | 0.2 | 0.326 | +0.0226 | 0.964 | 0.65 | +0.0192 [+0.0054, +0.0357] |  |
+| specprefill | bf16 | 0.4 | 0.495 | +0.0176 | 0.974 | 0.72 | +0.0141 [+0.0034, +0.0267] |  |
+| specprefill | int4 | 0.05 | 0.164 | +0.0314 | 0.951 | 0.43 | +0.0279 [+0.0118, +0.0438] |  |
+| specprefill | int4 | 0.1 | 0.170 | +0.0329 | 0.952 | 0.55 | +0.0294 [+0.0111, +0.0494] |  |
+| specprefill | int4 | 0.2 | 0.183 | +0.0254 | 0.963 | 0.65 | +0.0219 [+0.0083, +0.0376] |  |
+| specprefill | int4 | 0.4 | 0.207 | +0.0199 | 0.972 | 0.72 | +0.0164 [+0.0062, +0.0281] |  |
+
+Consensus vs SpecPrefill scoring (B=64, negative = consensus better):
+
+| hi | keep | dNLL consensus - specprefill [95% CI] |
+|---|---|---|
+| bf16 | 0.05 | -0.0036 [-0.0119, +0.0037] |
+| bf16 | 0.1 | -0.0055 [-0.0173, +0.0033] |
+| bf16 | 0.2 | -0.0014 [-0.0096, +0.0056] |
+| bf16 | 0.4 | -0.0014 [-0.0061, +0.0027] |
+| int4 | 0.05 | -0.0041 [-0.0122, +0.0030] |
+| int4 | 0.1 | -0.0053 [-0.0144, +0.0018] |
+| int4 | 0.2 | -0.0032 [-0.0112, +0.0038] |
+| int4 | 0.4 | -0.0012 [-0.0060, +0.0029] |
+
+## Verdict
+
+**NO-GO**: no draft-guided configuration beats uniform int4 under the pre-set rule.
+
+## Draft scoring latency after tool return (HF eager, pessimistic)
+
+draft_window: median 81 ms, specprefill: median 246 ms, consensus: median 701 ms (history median 16625 tokens)
+
+tar: Removing leading `/' from member names
+tar: Removing leading `/' from hard link targets
+tar: /home/imarihan/kv_manager/kv-gate-66032656.log: file changed as we read it

@@ -268,9 +268,13 @@ def main():
             V16 = [layer.values for layer in cache.layers]
             del cache
 
-            rec = AttnRecorder(target, P)
-            ref_logp, ref_pred = run_turn(target, lambda i: (K16[i], V16[i]), n_layers, fresh, tgt, rec)
+            # Reference with the same attention kernel (sdpa) as every scheme below. The oracle
+            # pass needs eager attention for its weights, whose numerics differ from sdpa, so it
+            # runs separately and its log-probs are not used as the reference.
+            ref_logp, ref_pred = run_turn(target, lambda i: (K16[i], V16[i]), n_layers, fresh, tgt)
             ref_nll = -ref_logp.mean().item()
+            rec = AttnRecorder(target, P)
+            run_turn(target, lambda i: (K16[i], V16[i]), n_layers, fresh, tgt, rec)
             tok_scores = {"oracle": rec.take()[0][0].max(dim=0).values}
             ds, timing = draft_scores(draft, hist, fresh, args, gen)
             tok_scores.update(ds)
@@ -285,10 +289,9 @@ def main():
                 middle = torch.arange(1, nb - n_recent, device=dev)
                 if middle.numel() == 0:
                     continue
-                K4 = [roundtrip_blocks(k, 4, B, "key") for k in K16]
-                V4 = [roundtrip_blocks(v, 4, B, "value") for v in V16]
-                K2 = [roundtrip_blocks(k, 2, B, "key") for k in K16]
-                V2 = [roundtrip_blocks(v, 2, B, "value") for v in V16]
+                # Quantized copies are made per layer on the fly instead of held for all layers
+                # (saves ~4x the bf16 history KV, ~18 GB at 34k tokens; quantization is per block,
+                # so the result is identical).
 
                 blk = {m: sc[: nb * B].reshape(nb, B).sum(dim=-1) for m, sc in tok_scores.items()}
                 blk["recency"] = torch.arange(nb, device=dev, dtype=torch.float32)
@@ -301,9 +304,16 @@ def main():
                     m4 = (tok_bits == 4)[None, None, :, None]
                     m2 = (tok_bits == 2)[None, None, :, None]
 
+                    has4, has2 = bool(m4.any()), bool(m2.any())
+
                     def layer_kv(i):
-                        k = torch.where(m2, K2[i], torch.where(m4, K4[i], K16[i]))
-                        v = torch.where(m2, V2[i], torch.where(m4, V4[i], V16[i]))
+                        k, v = K16[i], V16[i]
+                        if has4:
+                            k = torch.where(m4, roundtrip_blocks(K16[i], 4, B, "key"), k)
+                            v = torch.where(m4, roundtrip_blocks(V16[i], 4, B, "value"), v)
+                        if has2:
+                            k = torch.where(m2, roundtrip_blocks(K16[i], 2, B, "key"), k)
+                            v = torch.where(m2, roundtrip_blocks(V16[i], 2, B, "value"), v)
                         return k, v
 
                     logp, pred = run_turn(target, layer_kv, n_layers, fresh, tgt)
@@ -316,7 +326,8 @@ def main():
 
                 base = {"instance_id": instance_id, "turn": s["turn"], "hist_len": P,
                         "block_size": B, "ref_nll": ref_nll}
-                for name, bits in (("uniform_int4", 4), ("uniform_int2", 2)):
+                # uniform_bf16 is a control: a lossless reload, its dNLL must be exactly 0
+                for name, bits in (("uniform_bf16", 16), ("uniform_int4", 4), ("uniform_int2", 2)):
                     bb = torch.full((nb,), 16, device=dev, dtype=torch.int16)
                     bb[middle] = bits
                     rows.append({**base, "method": name, "hi": "", "keep_frac": 0.0,
@@ -334,7 +345,6 @@ def main():
                             bb[chosen] = BITS[hi]
                             rows.append({**base, "method": method, "hi": hi, "keep_frac": frac,
                                          "recall_vs_oracle": round(recall, 4), **evaluate(bb)})
-                del K4, V4, K2, V2
 
                 u4 = next(r for r in rows if r["block_size"] == B and r["method"] == "uniform_int4")
                 c = [r for r in rows if r["block_size"] == B and r["method"] == "consensus"
