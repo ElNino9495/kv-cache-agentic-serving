@@ -16,6 +16,7 @@ A sample mirrors one tool-call pause:
 import argparse
 import json
 import urllib.request
+from dataclasses import dataclass
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -84,17 +85,76 @@ def load(instance_id: str, data_dir: Path = DATA_DIR) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-# Llama-3 chat format; tool results use the "ipython" role.
+@dataclass(frozen=True)
+class ChatFormat:
+    """How one model family's chat template renders the replayed conversation.
+
+    hist_header  opens an assistant turn that is already part of the history
+    gen_header   opens the assistant turn being generated (the teacher-forced target)
+    hist_end     closes an assistant turn inside the history
+    target_end   closes the target (the model's own end-of-turn token)
+    native_context  longest sequence the model is trained for without RoPE scaling (0 = no cap)
+    """
+    name: str
+    templates: dict
+    hist_header: str
+    gen_header: str
+    hist_end: str
+    target_end: str
+    native_context: int = 0
+
+    def msg(self, role: str, content: str) -> str:
+        return self.templates.get(role, self.templates["default"]).format(role=role, content=content)
+
+
+# Llama-3: tool results use the "ipython" role. The default template's "Cutting Knowledge Date"
+# system header is left out, as in Phase 1 and the first gate run.
+LLAMA3 = ChatFormat(
+    name="llama3",
+    templates={"default": "<|start_header_id|>{role}<|end_header_id|>\n\n{content}<|eot_id|>",
+               "tool": "<|start_header_id|>ipython<|end_header_id|>\n\n{content}<|eot_id|>"},
+    hist_header="<|start_header_id|>assistant<|end_header_id|>\n\n",
+    gen_header="<|start_header_id|>assistant<|end_header_id|>\n\n",
+    hist_end="<|eot_id|>",
+    target_end="<|eot_id|>",
+)
+
+# Qwen3 ChatML with thinking off, matching tokenizer.apply_chat_template(..., enable_thinking=False,
+# add_generation_prompt=True): tool results become a user turn wrapped in <tool_response>, earlier
+# assistant turns (no reasoning) render plainly, and only the turn being generated gets the empty
+# <think></think> block. Native context is 32,768 tokens (no YaRN).
+QWEN3 = ChatFormat(
+    name="qwen3",
+    templates={"default": "<|im_start|>{role}\n{content}<|im_end|>\n",
+               "tool": "<|im_start|>user\n<tool_response>\n{content}\n</tool_response><|im_end|>\n"},
+    hist_header="<|im_start|>assistant\n",
+    gen_header="<|im_start|>assistant\n<think>\n\n</think>\n\n",
+    hist_end="<|im_end|>\n",
+    target_end="<|im_end|>",
+    native_context=32768,
+)
+
+FORMATS = {"llama": LLAMA3, "qwen3": QWEN3}
+
+
+def chat_format(model_type: str) -> ChatFormat:
+    """Chat format for a HF config.model_type."""
+    if model_type not in FORMATS:
+        raise ValueError(f"no chat format for model_type {model_type!r}; known: {sorted(FORMATS)}")
+    return FORMATS[model_type]
+
+
+# Llama-3 names kept for bench/replay.py.
 def msg(role: str, content: str) -> str:
-    role = "ipython" if role == "tool" else role
-    return f"<|start_header_id|>{role}<|end_header_id|>\n\n{content}<|eot_id|>"
+    return LLAMA3.msg(role, content)
 
 
-ASSISTANT_HEADER = "<|start_header_id|>assistant<|end_header_id|>\n\n"
-EOT = "<|eot_id|>"
+ASSISTANT_HEADER = LLAMA3.hist_header
+EOT = LLAMA3.hist_end
 
 
-def conversation(traj: dict, bos: str, nonce: str = "") -> tuple[list[str], list[tuple[str, str, str]]]:
+def conversation(traj: dict, bos: str, nonce: str = "",
+                 fmt: ChatFormat = LLAMA3) -> tuple[list[str], list[tuple[str, str, str]]]:
     """Returns (prefix pieces, [(agent message, tool output, next agent message), ...]).
 
     `nonce` is prepended to the system prompt so replayed copies of one recording do not
@@ -102,8 +162,8 @@ def conversation(traj: dict, bos: str, nonce: str = "") -> tuple[list[str], list
     """
     msgs = traj["messages"]
     head = [m for m in msgs if m["role"] in ("system", "user")]
-    prefix = [bos] + [msg(m["role"], (nonce if i == 0 else "") + m["content"]) for i, m in enumerate(head)]
-    prefix.append(ASSISTANT_HEADER)
+    prefix = [bos] + [fmt.msg(m["role"], (nonce if i == 0 else "") + m["content"]) for i, m in enumerate(head)]
+    prefix.append(fmt.hist_header)
     rest = [m for m in msgs if m["role"] in ("assistant", "tool")]
     pairs, pending = [], None
     for m in rest:
@@ -117,28 +177,41 @@ def conversation(traj: dict, bos: str, nonce: str = "") -> tuple[list[str], list
     return prefix, turns
 
 
-def make_samples(tokenizer, traj: dict, hist_lens: list[int], max_target_tokens: int) -> list[dict]:
-    """One sample per requested history length: the first tool-call pause whose history
-    reaches that many tokens."""
+def make_samples(tokenizer, traj: dict, hist_lens: list[int], max_target_tokens: int,
+                 fmt: ChatFormat = LLAMA3, turns: list[int] | None = None) -> list[dict]:
+    """Cut a recording into (history, fresh, target) samples.
+
+    By default, one sample per requested history length: the first tool-call pause whose history
+    reaches that many tokens. With `turns`, exactly those pauses (1-based turn numbers, as in
+    samples.csv), so different models are evaluated on the same pauses.
+    """
     enc = lambda s: tokenizer(s, add_special_tokens=False).input_ids
-    prefix, turns = conversation(traj, tokenizer.bos_token or "")
+    prefix, pauses = conversation(traj, tokenizer.bos_token or "", fmt=fmt)
     hist = [t for p in prefix for t in enc(p)]
     samples, wants = [], sorted(hist_lens)
-    for k, (agent, tool, nxt) in enumerate(turns):
-        hist = hist + enc(agent + EOT)
-        if wants and len(hist) >= wants[0]:
+    pick = set(turns) if turns is not None else None
+    for k, (agent, tool, nxt) in enumerate(pauses):
+        hist = hist + enc(agent + fmt.hist_end)
+        if pick is not None:
+            take = k + 1 in pick
+        else:
+            take = bool(wants) and len(hist) >= wants[0]
             while wants and len(hist) >= wants[0]:
                 wants.pop(0)
+        if take:
             samples.append({
                 "instance_id": traj["instance_id"],
                 "turn": k + 1,
                 "hist_ids": list(hist),
-                "fresh_ids": enc(msg("tool", tool) + ASSISTANT_HEADER),
-                "target_ids": enc(nxt + EOT)[:max_target_tokens],
+                "fresh_ids": enc(fmt.msg("tool", tool) + fmt.gen_header),
+                "target_ids": enc(nxt + fmt.target_end)[:max_target_tokens],
             })
-        hist = hist + enc(msg("tool", tool) + ASSISTANT_HEADER)
-        if not wants:
+        hist = hist + enc(fmt.msg("tool", tool) + fmt.hist_header)
+        if (pick is not None and len(samples) == len(pick)) or (pick is None and not wants):
             break
+    if pick is not None and len(samples) != len(pick):
+        found = {s["turn"] for s in samples}
+        raise ValueError(f"{traj['instance_id']}: turns {sorted(pick - found)} not in the recording")
     return samples
 
 

@@ -68,6 +68,24 @@ CUDA_VISIBLE_DEVICES=0 python -m experiments.gate.run_gate         # 1 x A100 80
 python -m experiments.gate.plot_gate                               # results/gate/summary.md + pareto plots
 ```
 
+### Uniform-only follow-up (after the NO-GO)
+
+`run_gate.py --uniform-only` drops the draft model, the oracle and all mixed schemes and runs only
+`uniform_bf16` (control, ΔNLL must be exactly 0) plus uniform int4, int3 and int2, for any target with a
+known chat format (Llama-3, Qwen3 with thinking off). It reuses the first run's 31 pauses
+(`results/gate/samples.csv`); Qwen3 skips pauses whose history + tool output + target exceed its
+native 32,768-token context (4 of 31, listed in `dropped.csv`; no YaRN). int3 has no packed format in
+`kvm/quant.py` yet: `experiments/gate/fakequant.py` uses the same arithmetic without packing, and bytes
+come from `block_bytes(3, ...)`.
+
+```bash
+for m in unsloth/Llama-3.1-8B-Instruct unsloth/Llama-3.2-3B-Instruct Qwen/Qwen3-8B; do
+  CUDA_VISIBLE_DEVICES=0 python -m experiments.gate.run_gate --uniform-only --target $m  # results/gate_uniform/<model>/
+done
+python -m experiments.gate.summarize_uniform  # results/gate_uniform/summary.md, incl. int3 vs consensus/specprefill
+# on Great Lakes: sbatch experiments/gate/greatlakes_uniform.sbatch
+```
+
 ## System design
 
 Everything is a vLLM 0.27.1 plugin, with no fork and no custom kernels.

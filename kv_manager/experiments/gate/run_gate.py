@@ -18,16 +18,28 @@ Each sample is one tool-call pause from a real SWE-bench agent run (see data.py)
 
 Schemes (block 0 and the recent window are always bf16; the trailing partial block is
 recomputed in bf16, as vLLM only offloads full blocks):
-  uniform_int4 / uniform_int2        every middle block at that precision, no draft
+  uniform_bf16                       control: lossless reload, dNLL must be exactly 0
+  uniform_int<b>                     every middle block at b bits, no draft (--uniform-bits)
   <method>, hi in {bf16, int4}, k    top-k fraction of middle blocks at `hi`, rest at int2
 
-Outputs (in --out-dir): metrics.csv (sample x block size x scheme), samples.csv.
+--uniform-only skips the draft model, the oracle pass and all mixed schemes, and runs only the
+uniform rows (default int4, int3, int2) for any --target with a known chat format (Llama-3,
+Qwen3). It evaluates the pauses listed in --samples-from (default: the first gate run's
+samples.csv), so every model sees the same 31 pauses. A pause whose history + tool output +
+target exceeds the model's native context (Qwen3: 32,768, no YaRN) is skipped and listed in
+dropped.csv. int3 has no packed format in kvm.quant yet: it is quantized and dequantized with
+the same arithmetic (fakequant.py) and its bytes come from kvm.quant.block_bytes(3, ...).
+
+Outputs (in --out-dir): metrics.csv (sample x block size x scheme), samples.csv, dropped.csv.
 
     cd kv_manager
     python -m experiments.gate.data                                   # download recordings
     CUDA_VISIBLE_DEVICES=0 python -m experiments.gate.run_gate --max-samples 1 --hist-lens 4000  # smoke
     CUDA_VISIBLE_DEVICES=0 python -m experiments.gate.run_gate        # full run
     python -m experiments.gate.plot_gate
+    # uniform only, same pauses as the full run; results in results/gate_uniform/<model>/
+    CUDA_VISIBLE_DEVICES=0 python -m experiments.gate.run_gate --uniform-only --target Qwen/Qwen3-8B
+    python -m experiments.gate.summarize_uniform
 """
 
 import argparse
@@ -40,7 +52,8 @@ import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer, DynamicCache
 
 from experiments.gate import data
-from kvm.quant import block_bytes, roundtrip_blocks
+from experiments.gate.fakequant import roundtrip
+from kvm.quant import block_bytes
 
 ROOT = Path(__file__).resolve().parents[2]
 BITS = {"bf16": 16, "int4": 4, "int2": 2}
@@ -196,6 +209,19 @@ def draft_scores(draft, hist, fresh, args, gen):
              "consensus_ms": 1e3 * (t_base + t_cons)})
 
 
+def model_slug(model_id: str) -> str:
+    return model_id.rstrip("/").split("/")[-1].lower()
+
+
+def read_pauses(path: Path) -> dict[str, list[int]]:
+    """{instance_id: [turn, ...]} from a samples.csv, in file order."""
+    out: dict[str, list[int]] = {}
+    with open(path) as f:
+        for r in csv.DictReader(f):
+            out.setdefault(r["instance_id"], []).append(int(r["turn"]))
+    return out
+
+
 def top_blocks(block_scores, middle, frac):
     n = int(round(frac * middle.numel()))
     if n == 0:
@@ -223,36 +249,85 @@ def main():
     p.add_argument("--top-p", type=float, default=0.95)
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--device", default="cuda")
-    p.add_argument("--out-dir", default=str(ROOT / "results" / "gate"))
+    p.add_argument("--uniform-only", action="store_true",
+                   help="only uniform reload rows; no draft model, no oracle, no mixed schemes")
+    p.add_argument("--uniform-bits", nargs="*", type=int, default=None,
+                   help="uniform low-bit widths (default: 4 3 2 with --uniform-only, else 4 2)")
+    p.add_argument("--samples-from", default=None,
+                   help="samples.csv whose (instance_id, turn) pauses to evaluate instead of picking "
+                        "by --hist-lens (default with --uniform-only: results/gate/samples.csv)")
+    p.add_argument("--max-context", type=int, default=None,
+                   help="skip pauses with history + tool output + target above this many tokens "
+                        "(default: the model's native context, 32768 for Qwen3; 0 = no cap)")
+    p.add_argument("--out-dir", default=None,
+                   help="default: results/gate, or results/gate_uniform/<model> with --uniform-only")
     p.add_argument("--resume", action="store_true")
     args = p.parse_args()
+
+    if args.uniform_bits is None:
+        args.uniform_bits = [4, 3, 2] if args.uniform_only else [4, 2]
+    if args.samples_from is None and args.uniform_only:
+        args.samples_from = str(ROOT / "results" / "gate" / "samples.csv")
+    if args.out_dir is None:
+        args.out_dir = str(ROOT / "results" / ("gate_uniform/" + model_slug(args.target)
+                                                if args.uniform_only else "gate"))
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     metrics_path, samples_path = out_dir / "metrics.csv", out_dir / "samples.csv"
+    dropped_path = out_dir / "dropped.csv"
     done = set()
     if args.resume and samples_path.exists():
         with open(samples_path) as f:
             done = {(r["instance_id"], int(r["turn"])) for r in csv.DictReader(f)}
     else:
-        metrics_path.unlink(missing_ok=True)
-        samples_path.unlink(missing_ok=True)
+        for path in (metrics_path, samples_path, dropped_path):
+            path.unlink(missing_ok=True)
+    dropped_seen = set()
+    if dropped_path.exists():
+        with open(dropped_path) as f:
+            dropped_seen = {(r["instance_id"], int(r["turn"])) for r in csv.DictReader(f)}
 
-    print(f"loading {args.target} and {args.draft}")
     dev = args.device
+    print(f"loading {args.target}" + ("" if args.uniform_only else f" and {args.draft}"))
     tok, target = load_model(args.target, dev)
-    dtok, draft = load_model(args.draft, dev)
-    assert tok.get_vocab() == dtok.get_vocab(), "target and draft must share a tokenizer"
+    if not args.uniform_only:
+        dtok, draft = load_model(args.draft, dev)
+        assert tok.get_vocab() == dtok.get_vocab(), "target and draft must share a tokenizer"
     cfg = target.config
+    fmt = data.chat_format(cfg.model_type)
     n_layers, kv_heads = cfg.num_hidden_layers, cfg.num_key_value_heads
     head_dim = getattr(cfg, "head_dim", None) or cfg.hidden_size // cfg.num_attention_heads
+    max_ctx = fmt.native_context if args.max_context is None else args.max_context
+    print(f"chat format {fmt.name}, {n_layers} layers, {kv_heads} KV heads x {head_dim}, "
+          f"context cap {max_ctx or 'none'}", flush=True)
+
+    pauses = read_pauses(Path(args.samples_from)) if args.samples_from else None
+    gate_hist = {}
+    if pauses is not None:
+        with open(args.samples_from) as f:
+            gate_hist = {(r["instance_id"], int(r["turn"])): int(r["hist_len"]) for r in csv.DictReader(f)}
+    instances = [i for i in args.instances if pauses is None or i in pauses]
 
     n_done = 0
-    for instance_id in args.instances:
-        for s in data.make_samples(tok, data.load(instance_id), args.hist_lens, args.max_target_tokens):
+    for instance_id in instances:
+        traj = data.load(instance_id)
+        samples = data.make_samples(tok, traj, args.hist_lens, args.max_target_tokens, fmt=fmt,
+                                    turns=None if pauses is None else pauses[instance_id])
+        for s in samples:
             if args.max_samples and n_done >= args.max_samples:
                 return
             if (instance_id, s["turn"]) in done:
+                continue
+            total = len(s["hist_ids"]) + len(s["fresh_ids"]) + len(s["target_ids"])
+            if max_ctx and total > max_ctx:
+                print(f"\n{instance_id} turn {s['turn']}: skipped, {total} tokens > {max_ctx}", flush=True)
+                if (instance_id, s["turn"]) not in dropped_seen:
+                    _append(dropped_path, [{"instance_id": instance_id, "turn": s["turn"],
+                                            "hist_len": len(s["hist_ids"]), "fresh_len": len(s["fresh_ids"]),
+                                            "target_len": len(s["target_ids"]), "total": total,
+                                            "max_context": max_ctx}])
+                    dropped_seen.add((instance_id, s["turn"]))
                 continue
             n_done += 1
             gen = torch.Generator(device=dev).manual_seed(args.seed + s["turn"])
@@ -273,14 +348,18 @@ def main():
             # runs separately and its log-probs are not used as the reference.
             ref_logp, ref_pred = run_turn(target, lambda i: (K16[i], V16[i]), n_layers, fresh, tgt)
             ref_nll = -ref_logp.mean().item()
-            rec = AttnRecorder(target, P)
-            run_turn(target, lambda i: (K16[i], V16[i]), n_layers, fresh, tgt, rec)
-            tok_scores = {"oracle": rec.take()[0][0].max(dim=0).values}
-            ds, timing = draft_scores(draft, hist, fresh, args, gen)
-            tok_scores.update(ds)
-            print(f"  ref NLL {ref_nll:.3f} | draft scoring: window {timing['draft_window_ms']:.0f} ms, "
-                  f"specprefill {timing['specprefill_ms']:.0f} ms, consensus {timing['consensus_ms']:.0f} ms",
-                  flush=True)
+            tok_scores, timing = {}, {}
+            if args.uniform_only:
+                print(f"  ref NLL {ref_nll:.3f}", flush=True)
+            else:
+                rec = AttnRecorder(target, P)
+                run_turn(target, lambda i: (K16[i], V16[i]), n_layers, fresh, tgt, rec)
+                tok_scores = {"oracle": rec.take()[0][0].max(dim=0).values}
+                ds, timing = draft_scores(draft, hist, fresh, args, gen)
+                tok_scores.update(ds)
+                print(f"  ref NLL {ref_nll:.3f} | draft scoring: window {timing['draft_window_ms']:.0f} ms, "
+                      f"specprefill {timing['specprefill_ms']:.0f} ms, consensus {timing['consensus_ms']:.0f} ms",
+                      flush=True)
 
             rows = []
             for B in args.block_sizes:
@@ -301,19 +380,14 @@ def main():
                 def evaluate(block_bits):
                     tok_bits = torch.full((P,), 16, device=dev, dtype=torch.int16)
                     tok_bits[: nb * B] = block_bits.repeat_interleave(B)
-                    m4 = (tok_bits == 4)[None, None, :, None]
-                    m2 = (tok_bits == 2)[None, None, :, None]
-
-                    has4, has2 = bool(m4.any()), bool(m2.any())
+                    masks = {b: (tok_bits == b)[None, None, :, None]
+                             for b in block_bits.unique().tolist() if b != 16}
 
                     def layer_kv(i):
                         k, v = K16[i], V16[i]
-                        if has4:
-                            k = torch.where(m4, roundtrip_blocks(K16[i], 4, B, "key"), k)
-                            v = torch.where(m4, roundtrip_blocks(V16[i], 4, B, "value"), v)
-                        if has2:
-                            k = torch.where(m2, roundtrip_blocks(K16[i], 2, B, "key"), k)
-                            v = torch.where(m2, roundtrip_blocks(V16[i], 2, B, "value"), v)
+                        for b, m in masks.items():
+                            k = torch.where(m, roundtrip(K16[i], b, B, "key"), k)
+                            v = torch.where(m, roundtrip(V16[i], b, B, "value"), v)
                         return k, v
 
                     logp, pred = run_turn(target, layer_kv, n_layers, fresh, tgt)
@@ -327,13 +401,14 @@ def main():
                 base = {"instance_id": instance_id, "turn": s["turn"], "hist_len": P,
                         "block_size": B, "ref_nll": ref_nll}
                 # uniform_bf16 is a control: a lossless reload, its dNLL must be exactly 0
-                for name, bits in (("uniform_bf16", 16), ("uniform_int4", 4), ("uniform_int2", 2)):
+                uniform = [("uniform_bf16", 16)] + [(f"uniform_int{b}", b) for b in args.uniform_bits]
+                for name, bits in uniform:
                     bb = torch.full((nb,), 16, device=dev, dtype=torch.int16)
                     bb[middle] = bits
                     rows.append({**base, "method": name, "hi": "", "keep_frac": 0.0,
                                  "recall_vs_oracle": "", **evaluate(bb)})
 
-                for frac in args.keep_fracs:
+                for frac in ([] if args.uniform_only else args.keep_fracs):
                     oracle_set = set(top_blocks(blk["oracle"], middle, frac).tolist())
                     for method, sc in blk.items():
                         chosen = top_blocks(sc, middle, frac)
@@ -346,6 +421,11 @@ def main():
                             rows.append({**base, "method": method, "hi": hi, "keep_frac": frac,
                                          "recall_vs_oracle": round(recall, 4), **evaluate(bb)})
 
+                if args.uniform_only:
+                    print(f"  B={B}: " + " | ".join(
+                        f"{r['method'][8:]} {r['delta_nll']:+.4f} @ {r['bytes_frac']:.3f}"
+                        for r in rows if r["block_size"] == B), flush=True)
+                    continue
                 u4 = next(r for r in rows if r["block_size"] == B and r["method"] == "uniform_int4")
                 c = [r for r in rows if r["block_size"] == B and r["method"] == "consensus"
                      and r["hi"] == "bf16" and r["keep_frac"] == 0.10]
@@ -355,9 +435,12 @@ def main():
                           flush=True)
 
             _append(metrics_path, rows)
+            info = {"model": args.target, "chat_format": fmt.name}
+            if pauses is not None:
+                info["gate_hist_len"] = gate_hist.get((instance_id, s["turn"]), "")
             _append(samples_path, [{"instance_id": instance_id, "turn": s["turn"], "hist_len": P,
                                     "fresh_len": fresh.shape[1], "target_len": tgt.shape[1],
-                                    "ref_nll": ref_nll, **timing}])
+                                    "ref_nll": ref_nll, **timing, **info}])
             del K16, V16
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
