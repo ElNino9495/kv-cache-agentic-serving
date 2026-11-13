@@ -1,0 +1,5 @@
+instance_id,turn,hist_len,fresh_len,target_len,total,max_context
+sphinx-doc__sphinx-8548,76,33102,513,42,33657,32768
+django__django-11265,64,33103,315,40,33458,32768
+sympy__sympy-12419,72,34755,2986,34,37775,32768
+pydata__xarray-4687,85,33605,769,26,34400,32768
