@@ -86,6 +86,23 @@ python -m experiments.gate.summarize_uniform  # results/gate_uniform/summary.md,
 # on Great Lakes: sbatch experiments/gate/greatlakes_uniform.sbatch
 ```
 
+### Per-step fetch study (2-bit base)
+
+`run_fetch.py` reloads the history at int2 (block 16, same pins), prefills the tool output over it
+without fetching, then teacher-forces the first 64 target tokens one at a time. At every step and layer,
+each scheme swaps its own top-k history tokens per KV head to bf16 for that step only (k in 16/32/64/128):
+previous-step int2 attention (`s1`), current-step int2 attention (`s2`, SpeCache's non-speculative
+variant), two sensitivity scores (`sens_a` deployable, `sens_b` first-order with bf16 keys), the bf16
+oracle, and `s1_layer` (one set per layer). Also uniform int2/int3 and `fetch_all` (the ceiling given an
+int2 tool-output prefill). All schemes run as one batch through a custom attention function
+(`fetch_attn.py`); every pause re-checks the per-step bf16 and int2 rows against sdpa teacher forcing.
+
+```bash
+CUDA_VISIBLE_DEVICES=0 python -m experiments.gate.run_fetch      # results/gate_fetch/<model>/
+python -m experiments.gate.summarize_fetch                       # summary.md: dNLL CIs vs int2/int3, bytes
+# on Great Lakes: sbatch experiments/gate/greatlakes_fetch.sbatch
+```
+
 ## System design
 
 Everything is a vLLM 0.27.1 plugin, with no fork and no custom kernels.
