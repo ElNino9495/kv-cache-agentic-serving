@@ -16,18 +16,28 @@ KV segments seen by a row at decode step j:
 
 Fetching (exact, cheap): with fetched set S of a KV head, history logits are q.K_base^T with
 entries in S replaced by q.K16[S], and the output is softmax(.) @ V_base + sum_{i in S} p_i (V16_i - V_base_i).
+tests/test_fetch_partial.py checks this against attention over a cache rebuilt with S in bf16.
 
 Selection policies (top-k over the quantized middle tokens, per KV head unless per_layer):
-  s1      previous step's attention over int2 keys (query heads of a KV head summed)
-  s2      current step's attention over int2 keys (SpeCache's non-speculative variant)
-  sens_a  previous-step attention x query-independent quantization error:
-          sum_g p_g,i (||dV_i|| + ||q_g|| ||dK_i|| / sqrt(d)), deployable (norms stored at offload)
-  sens_b  previous-step attention x first-order output error of fixing token i:
-          sum_g p_g,i ||dV_i + dl_g,i (V2_i - o_g)||, dl_g,i = q_g . dK_i / sqrt(d) (needs bf16 keys)
-  oracle  current step's true bf16 attention
-  all     every middle token (ceiling for per-step fetching given the row's tool-output prefill;
-          with a bf16 tool-output prefill it equals the bf16 row exactly: the noise_ctrl row)
+  s1        previous step's attention over int2 keys (query heads of a KV head summed)
+  s2        current step's attention over int2 keys (SpeCache's non-speculative variant)
+  spec      SpeCache: a speculative token (the model's own greedy guess of the next input) is decoded
+            alongside every step in a shadow row; its attention over int2 keys selects the next step's set
+  sens_a    previous-step attention x query-independent quantization error:
+            sum_g p_g,i (||dV_i|| + ||q_g|| ||dK_i|| / sqrt(d)), deployable (norms stored at offload)
+  sens_b    previous-step attention x first-order output error of fixing token i:
+            sum_g p_g,i ||dV_i + dl_g,i (V2_i - o_g)||, dl_g,i = q_g . dK_i / sqrt(d) (needs bf16 keys)
+  s2sens_a  sens_a's score with the current step's int2 attention and query
+  s2sens_b  sens_b's score with the current step's int2 attention, query and int2 output
+  oracle    current step's true bf16 attention
+  all       every middle token (ceiling for per-step fetching given the row's tool-output prefill;
+            with a bf16 tool-output prefill it equals the bf16 row exactly: the noise_ctrl row)
 d = bf16 - int2. per_layer: one set per layer, scored by summing over all heads, used by every head.
+
+Shadow rows (spec): the shadow of a spec row decodes the guessed next token at position +1. It sees
+the same history view as its spec row (int2 + the spec row's fetched set at that step), the same tool
+output, the spec row's generated tokens including the current one, and itself; its own KV is
+discarded. Its argmax is the next guess. The shadow scores with int2 keys (as s1/s2 do).
 """
 
 import math
@@ -41,8 +51,9 @@ from experiments.gate.fakequant import roundtrip
 from kvm.quant import block_bytes
 
 ATTN_NAME = "gate_fetch"
-PREV_POLICIES = ("s1", "sens_a", "sens_b")
-FETCH_POLICIES = PREV_POLICIES + ("s2", "oracle", "all")
+PREV_POLICIES = ("s1", "sens_a", "sens_b", "spec")   # select with scores stored at the previous step
+CUR_INT2_POLICIES = ("s2", "s2sens_a", "s2sens_b")   # select with the current step's int2 attention
+FETCH_POLICIES = PREV_POLICIES + CUR_INT2_POLICIES + ("oracle", "all")
 _CTX = None
 
 
@@ -54,6 +65,7 @@ class Row:
     policy: str = "none"
     k: int = 0
     per_layer: bool = False
+    shadow: bool = False  # speculative-token row paired with the spec row of the same k / per_layer
 
 
 def default_rows(ks=(16, 32, 64, 128)) -> list[Row]:
@@ -62,9 +74,15 @@ def default_rows(ks=(16, 32, 64, 128)) -> list[Row]:
             # so its dNLL is the bf16 rounding noise of the per-step path on that pause
             Row("noise_ctrl", hist="int2", fresh="bf16", policy="all")]
     for k in ks:
-        rows += [Row(p, policy=p, k=k) for p in ("s1", "s2", "sens_a", "sens_b", "oracle")]
+        rows += [Row(p, policy=p, k=k) for p in ("s1", "s2", "sens_a", "sens_b", "oracle", "s2sens_a", "s2sens_b")]
         rows.append(Row("s1_layer", policy="s1", k=k, per_layer=True))
+        rows += [Row("spec", policy="spec", k=k), Row("spec_shadow", policy="spec", k=k, shadow=True)]
     return rows
+
+
+def diagnostic_rows(ks=(16, 64, 128)) -> list[Row]:
+    return [Row("bf16", "bf16", "bf16"), Row("int2")] + \
+           [Row(p, policy=p, k=k) for p in ("s1", "s2", "oracle") for k in ks]
 
 
 def first_order_norm(dV, dK, V2, q, o, scaling):
@@ -85,11 +103,21 @@ class FetchContext:
         any_k = next(iter(hist.values()))[0][0]
         dev = any_k.device
         self.P, self.F = any_k.shape[1], next(iter(fresh.values()))[0][0].shape[1]
-        self.t, self.fetch = 0, False
+        self.t, self.fetch, self.diag = 0, False, False
         R = len(rows)
 
         def ix(cond):
             return torch.tensor([i for i, r in enumerate(rows) if cond(r)], device=dev, dtype=torch.long)
+
+        # shadow i reads its spec row's generated KV and selection scores
+        self.pair = {}
+        for i, r in enumerate(rows):
+            if r.shadow:
+                self.pair[i] = next(j for j, s in enumerate(rows) if not s.shadow and s.policy == "spec"
+                                    and s.k == r.k and s.per_layer == r.per_layer)
+        self.score_src = [self.pair.get(i, i) for i in range(R)]
+        self.gen_src = torch.tensor(self.score_src, device=dev, dtype=torch.long)
+        self.is_shadow = torch.tensor([r.shadow for r in rows], device=dev)
 
         self.by_hist = {b: ix(lambda r, b=b: r.hist == b) for b in {r.hist for r in rows}}
         self.by_fresh = {g: ix(lambda r, g=g: r.fresh == g) for g in {r.fresh for r in rows}}
@@ -99,7 +127,6 @@ class FetchContext:
             if r.policy != "none":
                 self.groups.setdefault((r.policy, r.per_layer, r.hist), []).append(i)
         self.fetch_rows = ix(lambda r: r.policy != "none")
-        self.prev_rows = ix(lambda r: r.policy in PREV_POLICIES)
         self.gen = [None] * n_layers
         self.prev = [dict() for _ in range(n_layers)]
         self.err = [None] * n_layers
@@ -107,6 +134,7 @@ class FetchContext:
         z = lambda: torch.zeros(R, device=dev, dtype=torch.float64)
         self.st_pairs, self.st_distinct, self.st_recall, self.st_obs = z(), z(), z(), z()
         self.last_idx = {}
+        self.diag_records = []
 
     def errors(self, l):
         """Per-layer quantities that do not depend on the query, over the middle tokens."""
@@ -126,32 +154,48 @@ def fetch_attention(module, query, key, value, attention_mask, scaling, dropout=
     kvh = key.shape[1]
     G = H // kvh
     P, F, t, lo, hi = ctx.P, ctx.F, ctx.t, ctx.lo, ctx.hi
+    dev = query.device
     if ctx.gen[l] is None:
         ctx.gen[l] = (key.new_zeros(R, kvh, ctx.max_tokens, d), value.new_zeros(R, kvh, ctx.max_tokens, d))
     gk, gv = ctx.gen[l]
     gk[:, :, t], gv[:, :, t] = key[:, :, 0], value[:, :, 0]
     q = query[:, :, 0].float().reshape(R, kvh, G, d)
-    hk = torch.arange(kvh, device=q.device)[None, :, None]
+    k_own = key[:, :, 0].float()
+    v_own = value[:, :, 0].float()
+    hk = torch.arange(kvh, device=dev)[None, :, None]
+    src = ctx.gen_src
 
     Kf = {b: ctx.hist[b][l][0].float() for b in ctx.hist}
     Vf = {b: ctx.hist[b][l][1].float() for b in ctx.hist}
     lh = q.new_empty(R, kvh, G, P)
     for b, rows in ctx.by_hist.items():
         lh[rows] = torch.einsum("rkgd,kpd->rkgp", q[rows], Kf[b]) * scaling
-    lt = q.new_empty(R, kvh, G, F + t + 1)
+    # tail: tool output | generated tokens (a shadow reads its spec row's) | own token (shadows only)
+    lt = q.new_empty(R, kvh, G, F + t + 2)
     for g, rows in ctx.by_fresh.items():
         lt[rows, :, :, :F] = torch.einsum("rkgd,kfd->rkgf", q[rows], ctx.fresh[g][l][0].float()) * scaling
-    lt[..., F:] = torch.einsum("rkgd,rktd->rkgt", q, gk[:, :, :t + 1].float()) * scaling
+    lt[..., F:F + t + 1] = torch.einsum("rkgd,rktd->rkgt", q, gk[src, :, :t + 1].float()) * scaling
+    own = torch.einsum("rkgd,rkd->rkg", q, k_own) * scaling
+    lt[..., -1] = torch.where(ctx.is_shadow[:, None, None], own, torch.full_like(own, float("-inf")))
+    lh_pre = lh.clone() if ctx.diag else None
 
     def mid_probs(lhist, rows):
         """Attention probabilities over the middle history tokens, (n, kvh, G, hi - lo)."""
         return torch.cat([lhist, lt[rows]], dim=-1).softmax(dim=-1)[..., lo:hi]
 
+    def int2_output(rows):
+        """Attention output of `rows` with the int2 history and no fetch, (n, kvh, G, d)."""
+        p = torch.cat([lh[rows], lt[rows]], dim=-1).softmax(dim=-1)
+        out = torch.einsum("rkgp,kpd->rkgd", p[..., :P], Vf["int2"])
+        out += torch.einsum("rkgf,kfd->rkgd", p[..., P:P + F], ctx.fresh["int2"][l][1].float())
+        out += torch.einsum("rkgt,rktd->rkgd", p[..., P + F:P + F + t + 1], gv[src[rows], :, :t + 1].float())
+        return out
+
     # int2 (pre-fetch) probabilities of rows that score with them, before any logit is replaced
     p2 = {}
     for (pol, per_layer, base), rr in ctx.groups.items():
-        if pol in PREV_POLICIES or pol == "s2":
-            rows = torch.tensor(rr, device=q.device)
+        if pol in PREV_POLICIES or pol in CUR_INT2_POLICIES:
+            rows = torch.tensor(rr, device=dev)
             p2[(pol, per_layer, base)] = (rows, mid_probs(lh[rows], rows))
     l16 = None
     if ctx.fetch and len(ctx.fetch_rows):
@@ -161,24 +205,35 @@ def fetch_attention(module, query, key, value, attention_mask, scaling, dropout=
     selections = []
     if ctx.fetch:
         for (pol, per_layer, base), rr in ctx.groups.items():
-            rows = torch.tensor(rr, device=q.device)
+            rows = torch.tensor(rr, device=dev)
             n = len(rr)
             if pol == "all":
-                top = torch.arange(lo, hi, device=q.device).expand(n, kvh, -1)
-                valid = torch.ones(n, hi - lo, dtype=torch.bool, device=q.device)
+                top = torch.arange(lo, hi, device=dev).expand(n, kvh, -1)
+                valid = torch.ones(n, hi - lo, dtype=torch.bool, device=dev)
             else:
                 if pol in PREV_POLICIES:
-                    score = torch.stack([ctx.prev[l][i] for i in rr])
-                elif pol == "s2":
-                    score = p2[(pol, per_layer, base)][1].sum(dim=2)
+                    score = torch.stack([ctx.prev[l][ctx.score_src[i]] for i in rr])
+                elif pol in CUR_INT2_POLICIES:
+                    pr = p2[(pol, per_layer, base)][1]
+                    if pol == "s2":
+                        score = pr.sum(dim=2)
+                    elif pol == "s2sens_a":
+                        e = ctx.errors(l)
+                        qn = q[rows].norm(dim=-1)[..., None]
+                        score = (pr * (e["dv"][None, :, None, :] + qn * e["dk"][None, :, None, :] * scaling)).sum(dim=2)
+                    else:  # s2sens_b
+                        K16m, V16m = (x[:, lo:hi].float() for x in ctx.hist["bf16"][l])
+                        K2m, V2m = (x[:, lo:hi].float() for x in ctx.hist["int2"][l])
+                        score = (pr * first_order_norm(V16m - V2m, K16m - K2m, V2m, q[rows], int2_output(rows),
+                                                       scaling)).sum(dim=2)
                 else:  # oracle
                     score = mid_probs(l16[[pos16[i] for i in rr]], rows).sum(dim=2)
                 if per_layer:
                     score = score.sum(dim=1, keepdim=True)
-                ks = torch.tensor([min(ctx.rows[i].k, hi - lo) for i in rr], device=q.device)
+                ks = torch.tensor([min(ctx.rows[i].k, hi - lo) for i in rr], device=dev)
                 kmax = int(ks.max())
                 top = score.topk(kmax, dim=-1).indices.expand(n, kvh, kmax) + lo
-                valid = torch.arange(kmax, device=q.device)[None, :] < ks[:, None]
+                valid = torch.arange(kmax, device=dev)[None, :] < ks[:, None]
             idxG = top[:, :, None, :].expand(-1, -1, G, -1)
             vG = valid[:, None, None, :]
             new = torch.einsum("rkgd,rkjd->rkgj", q[rows], Kf["bf16"][hk, top]) * scaling
@@ -196,46 +251,69 @@ def fetch_attention(module, query, key, value, attention_mask, scaling, dropout=
         o[rows] = torch.einsum("rkgp,kpd->rkgd", ph[rows], Vf[b])
     for g, rows in ctx.by_fresh.items():
         o[rows] += torch.einsum("rkgf,kfd->rkgd", pt[rows][..., :F], ctx.fresh[g][l][1].float())
-    o += torch.einsum("rkgt,rktd->rkgd", pt[..., F:], gv[:, :, :t + 1].float())
+    o += torch.einsum("rkgt,rktd->rkgd", pt[..., F:F + t + 1], gv[src, :, :t + 1].float())
+    o += pt[..., -1:] * v_own[:, :, None, :]
     for pol, per_layer, base, rr, rows, top, valid, idxG, vG in selections:
         dV = Vf["bf16"][hk, top] - Vf[base][hk, top]
         o[rows] += torch.einsum("rkgj,rkjd->rkgd", ph[rows].gather(-1, idxG) * vG, dV)
 
-    # statistics of this step's fetch
+    # statistics of this step's fetch (shadow rows are not schemes and are skipped)
     for pol, per_layer, base, rr, rows, top, valid, idxG, vG in selections:
         n = len(rr)
-        mask = torch.zeros(n, kvh, hi - lo, dtype=torch.bool, device=q.device)
+        mask = torch.zeros(n, kvh, hi - lo, dtype=torch.bool, device=dev)
         mask.scatter_(-1, top - lo, valid[:, None, :].expand(-1, kvh, -1))
         if ctx.union[l] is None:
-            ctx.union[l] = torch.zeros(R, kvh, hi - lo, dtype=torch.bool, device=q.device)
+            ctx.union[l] = torch.zeros(R, kvh, hi - lo, dtype=torch.bool, device=dev)
         ctx.union[l][rows] |= mask
         ctx.st_pairs[rows] += mask.sum(dim=(1, 2)).double()
         ctx.st_distinct[rows] += mask.any(dim=1).sum(dim=-1).double()
         ctx.st_obs[rows] += 1
         if pol != "all":
-            s16 = mid_probs(l16[[pos16[i] for i in rr]], rows).sum(dim=2)
+            p16 = mid_probs(l16[[pos16[i] for i in rr]], rows)  # (n, kvh, G, mid), current bf16 attention
+            s16 = p16.sum(dim=2)
             if per_layer:
                 s16 = s16.sum(dim=1, keepdim=True)
             otop = s16.topk(top.shape[-1], dim=-1).indices.expand(n, kvh, -1)
             omask = torch.zeros_like(mask).scatter_(-1, otop, valid[:, None, :].expand(-1, kvh, -1))
             ctx.st_recall[rows] += ((mask & omask).sum(dim=(1, 2)) / mask.sum(dim=(1, 2)).clamp_min(1)).double()
+            if ctx.diag:
+                pm2 = torch.cat([lh_pre[rows], lt[rows]], dim=-1).softmax(dim=-1)[..., lo:hi]
+                pma = ph[rows][..., lo:hi]
+                mass = lambda pr, m: (pr * m[:, :, None, :]).sum(dim=-1).mean(dim=2)  # (n, kvh), mean over G
+                for j, i in enumerate(rr):
+                    if ctx.rows[i].shadow:
+                        continue
+                    ctx.diag_records.append({
+                        "row": i, "t": t, "layer": l, "idx": top[j][:, valid[j]].to(torch.int32).cpu(),
+                        "mass_actual": mass(pma[j:j + 1], mask[j:j + 1])[0].cpu(),
+                        "mass_int2": mass(pm2[j:j + 1], mask[j:j + 1])[0].cpu(),
+                        "mass_bf16": mass(p16[j:j + 1], mask[j:j + 1])[0].cpu(),
+                        "oracle_mass_bf16": mass(p16[j:j + 1], omask[j:j + 1])[0].cpu(),
+                        "mid_mass_bf16": p16[j].sum(dim=-1).mean(dim=1).cpu(),
+                        "mid_mass_int2": pm2[j].sum(dim=-1).mean(dim=1).cpu(),
+                        "overlap": (mask[j] & omask[j]).sum(dim=-1).cpu(),
+                    })
 
-    # scores for the next step's selection (previous-step policies)
+    # scores for the next step's selection (previous-step policies; shadows score for their spec row)
     for (pol, per_layer, base), (rows, pr) in p2.items():
-        if pol == "s1":
+        if pol in CUR_INT2_POLICIES:
+            continue
+        if pol in ("s1", "spec"):
             score = pr.sum(dim=2)
         elif pol == "sens_a":
             e = ctx.errors(l)
             qn = q[rows].norm(dim=-1)[..., None]
             score = (pr * (e["dv"][None, :, None, :] + qn * e["dk"][None, :, None, :] * scaling)).sum(dim=2)
-        elif pol == "sens_b":
-            K16, V16 = (x[:, lo:hi].float() for x in ctx.hist["bf16"][l])
-            K2, V2 = (x[:, lo:hi].float() for x in ctx.hist["int2"][l])
-            score = (pr * first_order_norm(V16 - V2, K16 - K2, V2, q[rows], o[rows], scaling)).sum(dim=2)
-        else:
-            continue
+        else:  # sens_b
+            K16m, V16m = (x[:, lo:hi].float() for x in ctx.hist["bf16"][l])
+            K2m, V2m = (x[:, lo:hi].float() for x in ctx.hist["int2"][l])
+            score = (pr * first_order_norm(V16m - V2m, K16m - K2m, V2m, q[rows], o[rows], scaling)).sum(dim=2)
         for j, i in enumerate(rows.tolist()):
-            ctx.prev[l][i] = score[j]
+            if pol == "spec":
+                if ctx.rows[i].shadow:
+                    ctx.prev[l][ctx.pair[i]] = score[j]
+            else:
+                ctx.prev[l][i] = score[j]
 
     return o.reshape(R, 1, H, d).to(query.dtype), None
 
@@ -264,10 +342,11 @@ def hist_bytes(bits, P, lo, hi, block, kvh, d, n_layers):
 
 @torch.no_grad()
 def run_pause(model, hist_ids, fresh_ids, target_ids, rows, block=16, recent=64, max_steps=64,
-              check=False):
+              check=False, diag=False):
     """Run every row on one pause. Returns per-row log-probs/argmax of the first max_steps target
     tokens, fetch statistics and byte accounting; with check=True also compares the per-step
-    bf16 and int2 rows with sdpa teacher forcing over the same tokens (run_gate.run_turn)."""
+    bf16 and int2 rows with sdpa teacher forcing over the same tokens (run_gate.run_turn); with
+    diag=True also returns per-step, per-layer fetch records (diag_records)."""
     from experiments.gate.run_gate import prefill, run_turn
 
     cfg = model.config
@@ -303,7 +382,7 @@ def run_pause(model, hist_ids, fresh_ids, target_ids, rows, block=16, recent=64,
         hist[b] = list(zip(qcopy(K16, bits, "key"), qcopy(V16, bits, "value")))
 
     fresh = {}
-    for g in sorted({r.fresh for r in rows}):
+    for g in sorted({r.fresh for r in rows} | {"int2"}):
         c = DynamicCache()
         for i, (k, v) in enumerate(hist[g]):
             c.update(k[None], v[None], i)
@@ -313,22 +392,31 @@ def run_pause(model, hist_ids, fresh_ids, target_ids, rows, block=16, recent=64,
 
     R = len(rows)
     ctx = FetchContext(rows, {b: hist[b] for b in hist}, fresh, lo, hi, n_layers, T + 1)
+    ctx.diag = diag
+    shadow = torch.tensor([r.shadow for r in rows], device=dev)
     logp = torch.zeros(R, T, device=dev)
     pred = torch.zeros(R, T, dtype=torch.long, device=dev)
+    guess_hits = torch.zeros(R, device=dev)
     pos0 = P + F_all - 2
     with fetch_mode(model, ctx):
-        ctx.t, ctx.fetch = 0, False  # warm-up: second-to-last tool-output token, no fetching
-        model(input_ids=fresh_ids[:, -2:-1].expand(R, 1), position_ids=torch.full((R, 1), pos0, device=dev),
-              use_cache=False)
+        # warm-up: second-to-last tool-output token, no fetching; shadows decode the last one (known)
+        ctx.t, ctx.fetch = 0, False
+        x = torch.where(shadow, fresh_ids[0, -1], fresh_ids[0, -2])[:, None]
+        pos = torch.full((R, 1), pos0, device=dev) + shadow[:, None].long()
+        out = model(input_ids=x, position_ids=pos, use_cache=False)
+        guess = out.logits[:, -1].argmax(dim=-1)  # shadows: guess of target[0]
         ctx.fetch = True
         for j in range(T):
             ctx.t = j + 1
-            x = fresh_ids[:, -1:] if j == 0 else tgt[:, j - 1:j]
-            out = model(input_ids=x.expand(R, 1), position_ids=torch.full((R, 1), pos0 + 1 + j, device=dev),
-                        use_cache=False)
+            real = fresh_ids[0, -1] if j == 0 else tgt[0, j - 1]
+            guess_hits += (shadow & (guess == tgt[0, j])).float()
+            x = torch.where(shadow, guess, real)[:, None]
+            pos = torch.full((R, 1), pos0 + 1 + j, device=dev) + shadow[:, None].long()
+            out = model(input_ids=x, position_ids=pos, use_cache=False)
             lg = out.logits[:, -1].float()
             logp[:, j] = torch.log_softmax(lg, dim=-1)[:, tgt[0, j]]
             pred[:, j] = lg.argmax(dim=-1)
+            guess = pred[:, j]  # shadows: guess of target[j + 1]
 
     pair_bytes = 2 * d * 2  # K + V of one token, one KV head, one layer, bf16
     res = {"P": P, "F": F_all, "T": T, "lo": lo, "hi": hi,
@@ -340,6 +428,7 @@ def run_pause(model, hist_ids, fresh_ids, target_ids, rows, block=16, recent=64,
         obs = max(float(ctx.st_obs[i]), 1.0)
         union = sum(int(u[i].sum()) for u in ctx.union if u is not None)
         k_res = (hi - lo) if r.policy == "all" else min(r.k, hi - lo)
+        sh = next((s for s, p_ in ctx.pair.items() if p_ == i), None)
         res["rows"].append({
             "fetched_pairs_per_step": float(ctx.st_pairs[i]) / T,
             "distinct_tokens_per_layer_step": float(ctx.st_distinct[i]) / obs,
@@ -348,8 +437,11 @@ def run_pause(model, hist_ids, fresh_ids, target_ids, rows, block=16, recent=64,
             "unique_bytes_turn": union * pair_bytes,
             "resident_bytes": (res[f"{r.hist}_bytes"] + (k_res * kvh * n_layers * pair_bytes
                                                          if r.policy != "none" else 0)),
+            "spec_guess_acc": float(guess_hits[sh]) / T if sh is not None else float("nan"),
         })
     res["last_idx"] = {i: v.cpu() for i, v in ctx.last_idx.items()}
+    if diag:
+        res["diag_records"] = ctx.diag_records
 
     if check:
         names = [r.name for r in rows]

@@ -93,3 +93,16 @@ def test_first_order_norm_matches_direct():
     dl = torch.einsum("rkgd,kpd->rkgp", q, dK) * s
     direct = (dV[None, :, None] + dl[..., None] * (V2[None, :, None] - o[:, :, :, None])).norm(dim=-1)
     assert torch.allclose(first_order_norm(dV, dK, V2, q, o, s), direct, atol=1e-10)
+
+
+def test_full_k_spec_and_sensitivity_equal_fetch_all(model, ids):
+    # with k = every middle token the selection no longer matters: the spec row (with its shadow decoded
+    # alongside) and the current-query sensitivity rows must equal fetch_all
+    full = HI - LO
+    rows = [Row("fetch_all", policy="all"), Row("spec", policy="spec", k=full),
+            Row("spec_shadow", policy="spec", k=full, shadow=True),
+            Row("s2sens_a", policy="s2sens_a", k=full), Row("s2sens_b", policy="s2sens_b", k=full)]
+    res = _run(model, ids, rows)
+    for i in (1, 3, 4):
+        assert torch.allclose(res["logp"][i], res["logp"][0], atol=1e-4), rows[i].name
+    assert 0 <= res["rows"][1]["spec_guess_acc"] <= 1

@@ -92,15 +92,21 @@ python -m experiments.gate.summarize_uniform  # results/gate_uniform/summary.md,
 without fetching, then teacher-forces the first 64 target tokens one at a time. At every step and layer,
 each scheme swaps its own top-k history tokens per KV head to bf16 for that step only (k in 16/32/64/128):
 previous-step int2 attention (`s1`), current-step int2 attention (`s2`, SpeCache's non-speculative
-variant), two sensitivity scores (`sens_a` deployable, `sens_b` first-order with bf16 keys), the bf16
-oracle, and `s1_layer` (one set per layer). Also uniform int2/int3 and `fetch_all` (the ceiling given an
-int2 tool-output prefill). All schemes run as one batch through a custom attention function
-(`fetch_attn.py`); every pause re-checks the per-step bf16 and int2 rows against sdpa teacher forcing.
+variant), SpeCache's speculative token (`spec`: the model's own greedy guess of the next input, decoded
+alongside in a shadow row, selects the next step's set), sensitivity scores on the previous query
+(`sens_a` deployable, `sens_b` first-order with bf16 keys) and on the current query (`s2sens_a`,
+`s2sens_b`), the bf16 oracle, and `s1_layer` (one set per layer). Also uniform int2/int3, `fetch_all`
+(the ceiling given an int2 tool-output prefill) and `noise_ctrl` (bf16 rounding noise floor). All
+schemes run as one batch through a custom attention function (`fetch_attn.py`, checked against a
+brute-force cache rebuild in `tests/test_fetch_partial.py`); every pause re-checks the per-step bf16 and
+int2 rows against sdpa teacher forcing at the NLL level.
 
 ```bash
 CUDA_VISIBLE_DEVICES=0 python -m experiments.gate.run_fetch      # results/gate_fetch/<model>/
-python -m experiments.gate.summarize_fetch                       # summary.md: dNLL CIs vs int2/int3, bytes
-# on Great Lakes: sbatch experiments/gate/greatlakes_fetch.sbatch
+CUDA_VISIBLE_DEVICES=0 python -m experiments.gate.run_fetch --diagnose   # per-step fetch logs, xarray t85
+python -m experiments.gate.summarize_fetch                       # summary.md: CIs vs int2/int3/s2, medians, bytes
+# Great Lakes: ACCOUNT=<your_account> bash experiments/gate/greatlakes_fetch.sbatch   (MODE=full|diagnose|both)
+# CloudLab:    bash experiments/gate/cloudlab_fetch.sh   (venv + HF_HOME on /mydata, runs in tmux)
 ```
 
 ## System design
