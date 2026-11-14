@@ -1,0 +1,127 @@
+name, memory.total [MiB], driver_version
+NVIDIA A40, 46068 MiB, 595.71.05
+loading unsloth/Llama-3.1-8B-Instruct
+Loading weights:   0%|          | 0/291 [00:00<?, ?it/s]Loading weights:   1%|          | 2/291 [00:00<00:30,  9.40it/s]Loading weights:  10%|▉         | 28/291 [00:00<00:03, 81.91it/s]Loading weights:  13%|█▎        | 37/291 [00:00<00:04, 63.41it/s]Loading weights:  15%|█▌        | 44/291 [00:00<00:04, 58.96it/s]Loading weights:  17%|█▋        | 50/291 [00:01<00:05, 42.93it/s]Loading weights:  20%|██        | 59/291 [00:01<00:05, 40.30it/s]Loading weights:  22%|██▏       | 64/291 [00:01<00:05, 38.62it/s]Loading weights:  26%|██▌       | 75/291 [00:01<00:04, 43.31it/s]Loading weights:  29%|██▉       | 85/291 [00:01<00:03, 52.07it/s]Loading weights:  31%|███▏      | 91/291 [00:01<00:04, 43.08it/s]Loading weights:  33%|███▎      | 96/291 [00:03<00:12, 15.31it/s]Loading weights:  36%|███▌      | 105/291 [00:03<00:08, 20.75it/s]Loading weights:  39%|███▉      | 113/291 [00:03<00:06, 25.74it/s]Loading weights:  41%|████      | 118/291 [00:03<00:06, 26.99it/s]Loading weights:  43%|████▎     | 125/291 [00:03<00:06, 23.79it/s]Loading weights:  48%|████▊     | 139/291 [00:04<00:05, 28.84it/s]Loading weights:  50%|████▉     | 145/291 [00:04<00:05, 27.34it/s]Loading weights:  56%|█████▌    | 162/291 [00:04<00:02, 43.66it/s]Loading weights:  58%|█████▊    | 169/291 [00:04<00:02, 46.53it/s]Loading weights:  60%|██████    | 176/291 [00:04<00:02, 48.98it/s]Loading weights:  63%|██████▎   | 183/291 [00:05<00:02, 41.63it/s]Loading weights:  66%|██████▌   | 192/291 [00:05<00:02, 40.41it/s]Loading weights:  68%|██████▊   | 197/291 [00:05<00:02, 40.64it/s]Loading weights:  69%|██████▉   | 202/291 [00:05<00:02, 42.04it/s]Loading weights:  74%|███████▍  | 216/291 [00:05<00:01, 57.14it/s]Loading weights:  77%|███████▋  | 223/291 [00:05<00:01, 50.78it/s]Loading weights:  79%|███████▊  | 229/291 [00:06<00:01, 50.88it/s]Loading weights:  81%|████████  | 236/291 [00:06<00:01, 39.76it/s]Loading weights:  86%|████████▌ | 250/291 [00:06<00:00, 54.40it/s]Loading weights:  88%|████████▊ | 257/291 [00:06<00:00, 42.08it/s]Loading weights:  90%|█████████ | 263/291 [00:06<00:00, 41.63it/s]Loading weights:  92%|█████████▏| 268/291 [00:07<00:00, 35.43it/s]Loading weights:  94%|█████████▍| 273/291 [00:07<00:00, 27.71it/s]Loading weights:  96%|█████████▌| 278/291 [00:07<00:00, 29.22it/s]Loading weights: 100%|██████████| 291/291 [00:07<00:00, 38.12it/s]
+29 rows: bf16, fetch_all, int2, int3, noise_ctrl, oracle, s1, s1_layer, s2, sens_a, sens_b; ks [16, 32, 64, 128]
+sphinx-doc__sphinx-8548 turn 23: hist 8523, 48 steps, 31.0 s | int2 +0.0579 int3 -0.0043 fetch_all +0.0153 | s1@64 +0.0207 s2@64 +0.0179 sens_a@64 +0.0198 sens_b@64 +0.0215 oracle@64 +0.0156 | check max|dlogp| bf16 5.82e-02 int2 9.26e-02
+loading unsloth/Llama-3.1-8B-Instruct
+Loading weights:   0%|          | 0/291 [00:00<?, ?it/s]Loading weights: 100%|██████████| 291/291 [00:00<00:00, 14749.22it/s]
+29 rows: bf16, fetch_all, int2, int3, noise_ctrl, oracle, s1, s1_layer, s2, sens_a, sens_b; ks [16, 32, 64, 128]
+sphinx-doc__sphinx-8548 turn 23: hist 8523, 48 steps, 29.1 s | int2 +0.0579 int3 -0.0043 fetch_all +0.0153 | s1@64 +0.0207 s2@64 +0.0179 sens_a@64 +0.0198 sens_b@64 +0.0215 oracle@64 +0.0156 | check max|dlogp| bf16 5.82e-02 int2 9.26e-02
+sphinx-doc__sphinx-8548 turn 50: hist 18627, 27 steps, 30.8 s | int2 +0.0862 int3 -0.0177 fetch_all +0.0308 | s1@64 +0.0965 s2@64 +0.0353 sens_a@64 +0.1053 sens_b@64 +0.0823 oracle@64 +0.0489 | check max|dlogp| bf16 8.18e-02 int2 9.85e-02
+sphinx-doc__sphinx-8548 turn 66: hist 25528, 49 steps, 61.4 s | int2 -0.0218 int3 -0.0136 fetch_all +0.0073 | s1@64 +0.0054 s2@64 +0.0093 sens_a@64 +0.0010 sens_b@64 -0.0008 oracle@64 +0.0028 | check max|dlogp| bf16 1.11e-01 int2 7.31e-02
+sphinx-doc__sphinx-8548 turn 76: hist 32027, 38 steps, 63.2 s | int2 +0.0438 int3 -0.0034 fetch_all -0.0132 | s1@64 +0.0146 s2@64 +0.0013 sens_a@64 +0.0178 sens_b@64 +0.0166 oracle@64 +0.0026 | check max|dlogp| bf16 8.22e-02 int2 9.84e-02
+django__django-11265 turn 19: hist 8925, 23 steps, 15.7 s | int2 +0.1333 int3 +0.0115 fetch_all +0.0987 | s1@64 +0.1447 s2@64 +0.1127 sens_a@64 +0.1554 sens_b@64 +0.1527 oracle@64 +0.1098 | check max|dlogp| bf16 6.44e-02 int2 7.57e-02
+django__django-11265 turn 40: hist 16037, 64 steps, 54.9 s | int2 +0.0172 int3 -0.0006 fetch_all -0.0001 | s1@64 +0.0348 s2@64 +0.0065 sens_a@64 +0.0314 sens_b@64 +0.0237 oracle@64 +0.0111 | check max|dlogp| bf16 1.18e-01 int2 1.19e-01
+django__django-11265 turn 58: hist 26498, 32 steps, 45.5 s | int2 +0.0345 int3 +0.0088 fetch_all +0.0138 | s1@64 +0.0277 s2@64 +0.0130 sens_a@64 +0.0231 sens_b@64 +0.0199 oracle@64 +0.0069 | check max|dlogp| bf16 1.16e-01 int2 6.62e-02
+django__django-11265 turn 64: hist 32175, 36 steps, 60.1 s | int2 +0.0968 int3 -0.0026 fetch_all -0.0183 | s1@64 +0.0299 s2@64 -0.0134 sens_a@64 +0.0314 sens_b@64 +0.0262 oracle@64 -0.0064 | check max|dlogp| bf16 1.18e-01 int2 7.78e-02
+sympy__sympy-12419 turn 23: hist 8182, 24 steps, 15.1 s | int2 +0.0351 int3 -0.0016 fetch_all -0.0043 | s1@64 +0.0010 s2@64 +0.0011 sens_a@64 +0.0085 sens_b@64 +0.0069 oracle@64 +0.0116 | check max|dlogp| bf16 7.65e-02 int2 5.12e-02
+sympy__sympy-12419 turn 39: hist 17042, 26 steps, 27.3 s | int2 -0.0129 int3 -0.0149 fetch_all -0.0097 | s1@64 +0.0099 s2@64 -0.0208 sens_a@64 +0.0073 sens_b@64 +0.0036 oracle@64 -0.0251 | check max|dlogp| bf16 6.95e-02 int2 1.20e-01
+sympy__sympy-12419 turn 58: hist 24030, 64 steps, 73.7 s | int2 -0.0395 int3 +0.0072 fetch_all -0.0027 | s1@64 -0.0142 s2@64 -0.0088 sens_a@64 -0.0159 sens_b@64 -0.0156 oracle@64 -0.0039 | check max|dlogp| bf16 1.00e-01 int2 7.78e-02
+sympy__sympy-12419 turn 72: hist 33844, 34 steps, 70.7 s | int2 +0.0590 int3 +0.0114 fetch_all +0.0085 | s1@64 +0.0238 s2@64 +0.0177 sens_a@64 +0.0206 sens_b@64 +0.0178 oracle@64 +0.0173 | check max|dlogp| bf16 1.19e-01 int2 1.59e-01
+astropy__astropy-13398 turn 11: hist 8542, 50 steps, 30.2 s | int2 -0.0250 int3 -0.0010 fetch_all +0.0021 | s1@64 +0.0003 s2@64 +0.0148 sens_a@64 +0.0020 sens_b@64 +0.0092 oracle@64 +0.0012 | check max|dlogp| bf16 1.56e-01 int2 1.18e-01
+astropy__astropy-13398 turn 28: hist 16215, 49 steps, 43.5 s | int2 +0.0105 int3 +0.0080 fetch_all -0.0003 | s1@64 -0.0131 s2@64 +0.0116 sens_a@64 -0.0091 sens_b@64 -0.0092 oracle@64 +0.0163 | check max|dlogp| bf16 5.87e-02 int2 1.25e-01
+astropy__astropy-13398 turn 43: hist 25561, 51 steps, 63.7 s | int2 -0.0199 int3 +0.0143 fetch_all -0.0063 | s1@64 +0.0111 s2@64 +0.0047 sens_a@64 +0.0098 sens_b@64 +0.0254 oracle@64 +0.0045 | check max|dlogp| bf16 1.04e-01 int2 1.10e-01
+pytest-dev__pytest-5787 turn 12: hist 8268, 41 steps, 24.1 s | int2 +0.0216 int3 +0.0002 fetch_all +0.0070 | s1@64 +0.0118 s2@64 +0.0106 sens_a@64 +0.0154 sens_b@64 +0.0173 oracle@64 +0.0088 | check max|dlogp| bf16 5.23e-02 int2 9.33e-02
+pytest-dev__pytest-5787 turn 28: hist 16854, 64 steps, 56.1 s | int2 -0.0259 int3 -0.0032 fetch_all +0.0138 | s1@64 -0.0213 s2@64 +0.0120 sens_a@64 -0.0153 sens_b@64 -0.0057 oracle@64 +0.0075 | check max|dlogp| bf16 7.71e-02 int2 1.03e-01
+pytest-dev__pytest-5787 turn 35: hist 24021, 64 steps, 73.4 s | int2 -0.0102 int3 -0.0068 fetch_all -0.0003 | s1@64 -0.0014 s2@64 +0.0196 sens_a@64 -0.0016 sens_b@64 +0.0042 oracle@64 +0.0062 | check max|dlogp| bf16 1.29e-01 int2 1.16e-01
+pydata__xarray-4687 turn 17: hist 8305, 39 steps, 23.0 s | int2 +0.0561 int3 +0.0138 fetch_all +0.0207 | s1@64 +0.0321 s2@64 +0.0168 sens_a@64 +0.0288 sens_b@64 +0.0382 oracle@64 +0.0188 | check max|dlogp| bf16 8.78e-02 int2 6.53e-02
+pydata__xarray-4687 turn 44: hist 16198, 64 steps, 54.6 s | int2 +0.0124 int3 -0.0020 fetch_all +0.0097 | s1@64 -0.0211 s2@64 +0.0057 sens_a@64 -0.0131 sens_b@64 -0.0214 oracle@64 +0.0070 | check max|dlogp| bf16 1.24e-01 int2 1.24e-01
+pydata__xarray-4687 turn 65: hist 24652, 64 steps, 75.0 s | int2 +0.0299 int3 +0.0008 fetch_all +0.0053 | s1@64 +0.0111 s2@64 +0.0077 sens_a@64 +0.0106 sens_b@64 +0.0088 oracle@64 +0.0078 | check max|dlogp| bf16 1.88e-01 int2 1.77e-01
+pydata__xarray-4687 turn 85: hist 32285, 26 steps, 49.4 s | int2 +0.2100 int3 +0.0128 fetch_all -0.0169 | s1@64 +0.3147 s2@64 +0.0088 sens_a@64 +0.3263 sens_b@64 +0.3444 oracle@64 +0.0161 | check max|dlogp| bf16 7.04e-02 int2 2.21e-01
+mwaskom__seaborn-3069 turn 23: hist 8089, 41 steps, 24.0 s | int2 +0.0270 int3 +0.0015 fetch_all +0.0109 | s1@64 +0.0149 s2@64 +0.0127 sens_a@64 +0.0166 sens_b@64 +0.0154 oracle@64 +0.0098 | check max|dlogp| bf16 6.17e-02 int2 8.09e-02
+mwaskom__seaborn-3069 turn 43: hist 16063, 43 steps, 38.6 s | int2 +0.0266 int3 +0.0059 fetch_all +0.0087 | s1@64 -0.0007 s2@64 +0.0045 sens_a@64 +0.0005 sens_b@64 +0.0024 oracle@64 +0.0090 | check max|dlogp| bf16 1.09e-01 int2 1.37e-01
+mwaskom__seaborn-3069 turn 67: hist 24577, 30 steps, 40.7 s | int2 +0.0654 int3 -0.0155 fetch_all +0.0006 | s1@64 +0.0608 s2@64 +0.0183 sens_a@64 +0.0497 sens_b@64 +0.0443 oracle@64 +0.0129 | check max|dlogp| bf16 6.88e-02 int2 5.57e-02
+psf__requests-2931 turn 21: hist 8425, 64 steps, 37.7 s | int2 +0.0122 int3 +0.0088 fetch_all +0.0055 | s1@64 +0.0099 s2@64 -0.0000 sens_a@64 +0.0086 sens_b@64 +0.0130 oracle@64 +0.0037 | check max|dlogp| bf16 1.68e-01 int2 1.50e-01
+psf__requests-2931 turn 43: hist 16625, 30 steps, 29.5 s | int2 +0.0254 int3 +0.0226 fetch_all +0.0031 | s1@64 +0.0237 s2@64 +0.0055 sens_a@64 +0.0250 sens_b@64 +0.0273 oracle@64 +0.0103 | check max|dlogp| bf16 1.05e-01 int2 8.73e-02
+scikit-learn__scikit-learn-11310 turn 22: hist 8058, 21 steps, 13.9 s | int2 +0.0281 int3 -0.0154 fetch_all +0.0139 | s1@64 +0.0165 s2@64 +0.0143 sens_a@64 +0.0165 sens_b@64 +0.0172 oracle@64 +0.0187 | check max|dlogp| bf16 5.28e-02 int2 4.91e-02
+scikit-learn__scikit-learn-11310 turn 50: hist 16064, 51 steps, 44.5 s | int2 +0.0217 int3 -0.0091 fetch_all -0.0067 | s1@64 -0.0002 s2@64 -0.0105 sens_a@64 -0.0025 sens_b@64 +0.0015 oracle@64 -0.0118 | check max|dlogp| bf16 5.10e-02 int2 7.27e-02
+pallets__flask-5014 turn 22: hist 8014, 41 steps, 24.2 s | int2 +0.0223 int3 -0.0178 fetch_all -0.0085 | s1@64 +0.0125 s2@64 +0.0008 sens_a@64 +0.0096 sens_b@64 +0.0021 oracle@64 +0.0035 | check max|dlogp| bf16 1.04e-01 int2 9.72e-02
+pallets__flask-5014 turn 38: hist 17955, 20 steps, 23.1 s | int2 -0.0246 int3 -0.0091 fetch_all -0.0069 | s1@64 +0.0019 s2@64 -0.0105 sens_a@64 +0.0017 sens_b@64 -0.0086 oracle@64 -0.0080 | check max|dlogp| bf16 1.62e-02 int2 1.65e-02
+# Per-step fetch study: unsloth/Llama-3.1-8B-Instruct
+
+31 pauses, 42.5 teacher-forced steps per pause on average (cap 64). dNLL in nats per target token against the per-step bf16 row. Base: int2 history, block 16; block 0, the recent 64 tokens and the trailing partial block are bf16. Tool output prefilled over the int2 history without fetching (int3 row: over int3; bf16 row: over bf16).
+
+## Checks
+
+- bf16 row vs itself: max |dNLL| 0.0e+00
+- per-step vs sdpa teacher forcing, max |log p| difference over all tokens: bf16 1.88e-01, int2 2.21e-01
+- uniform int2 dNLL, sdpa batched +0.0310 vs per-step +0.0308 (max per-pause |difference| 1.1e-02)
+- 42.5 s per pause on average, 21.9 min total
+
+## Quality
+
+Fetched = (layer, KV head, token) pairs fetched per step; distinct = distinct token positions per layer per step. Recall = share of each fetched set that is also in the oracle set of the same size, computed with the row's own current query.
+
+Noise floor (noise_ctrl: bf16 tool-output prefill + fetch-all, exactly the bf16 row in exact arithmetic, so any dNLL is bf16 rounding in the per-step path): mean +0.0005 [95% CI -0.0009, +0.0022], s.d. over pauses 0.0045, mean |dNLL| 0.0032, max |dNLL| 0.0162; top-1 0.994 (min 0.952). Per-pause scheme differences smaller than about 0.0091 (2 s.d.) are within rounding noise.
+
+| scheme | dNLL | top-1 | recall | fetched / step | distinct / layer | dNLL - int2 [95% CI] | dNLL - int3 [95% CI] |
+|---|---|---|---|---|---|---|---|
+| bf16 | +0.0000 | 1.000 |  |  |  | -0.0308 [-0.0498, -0.0143] | +0.0004 [-0.0034, +0.0039] |
+| noise_ctrl | +0.0005 | 0.994 |  | 4,570,740 | 17,854 | -0.0303 [-0.0493, -0.0141] | +0.0008 [-0.0025, +0.0041] |
+| int2 | +0.0308 | 0.955 |  |  |  |  | +0.0311 [+0.0148, +0.0491] |
+| int3 | -0.0004 | 0.980 |  |  |  | -0.0311 [-0.0491, -0.0148] |  |
+| fetch_all | +0.0059 | 0.991 |  | 4,570,740 | 17,854 | -0.0249 [-0.0439, -0.0090] | +0.0062 [-0.0007, +0.0142] |
+| s1@16 | +0.0318 | 0.955 | 0.34 | 4,096 | 95 | +0.0011 [-0.0071, +0.0109] | +0.0322 [+0.0147, +0.0557] |
+| s1@32 | +0.0290 | 0.960 | 0.39 | 8,192 | 179 | -0.0017 [-0.0106, +0.0087] | +0.0294 [+0.0123, +0.0525] |
+| s1@64 | +0.0277 | 0.965 | 0.43 | 16,384 | 335 | -0.0031 [-0.0136, +0.0088] | +0.0280 [+0.0107, +0.0514] |
+| s1@128 | +0.0247 | 0.970 | 0.48 | 32,768 | 619 | -0.0061 [-0.0184, +0.0079] | +0.0250 [+0.0081, +0.0496] |
+| s2@16 | +0.0140 | 0.978 | 0.71 | 4,096 | 95 | -0.0168 [-0.0325, -0.0026] | +0.0143 [+0.0073, +0.0227] |
+| s2@32 | +0.0115 | 0.980 | 0.74 | 8,192 | 179 | -0.0192 [-0.0344, -0.0054] | +0.0119 [+0.0051, +0.0196] |
+| s2@64 | +0.0103 | 0.984 | 0.77 | 16,384 | 335 | -0.0205 [-0.0370, -0.0056] | +0.0107 [+0.0034, +0.0189] |
+| s2@128 | +0.0080 | 0.990 | 0.79 | 32,768 | 619 | -0.0228 [-0.0405, -0.0073] | +0.0083 [+0.0014, +0.0160] |
+| sens_a@16 | +0.0313 | 0.955 | 0.34 | 4,096 | 96 | +0.0005 [-0.0075, +0.0100] | +0.0316 [+0.0146, +0.0544] |
+| sens_a@32 | +0.0301 | 0.958 | 0.38 | 8,192 | 181 | -0.0007 [-0.0101, +0.0107] | +0.0304 [+0.0127, +0.0543] |
+| sens_a@64 | +0.0286 | 0.965 | 0.43 | 16,384 | 338 | -0.0022 [-0.0127, +0.0103] | +0.0289 [+0.0109, +0.0531] |
+| sens_a@128 | +0.0248 | 0.970 | 0.47 | 32,768 | 624 | -0.0059 [-0.0180, +0.0078] | +0.0252 [+0.0087, +0.0490] |
+| sens_b@16 | +0.0338 | 0.956 | 0.27 | 4,096 | 103 | +0.0031 [-0.0059, +0.0139] | +0.0342 [+0.0166, +0.0585] |
+| sens_b@32 | +0.0302 | 0.964 | 0.31 | 8,192 | 195 | -0.0006 [-0.0111, +0.0120] | +0.0305 [+0.0128, +0.0557] |
+| sens_b@64 | +0.0284 | 0.968 | 0.36 | 16,384 | 366 | -0.0023 [-0.0136, +0.0110] | +0.0288 [+0.0112, +0.0544] |
+| sens_b@128 | +0.0174 | 0.969 | 0.41 | 32,768 | 676 | -0.0133 [-0.0244, -0.0024] | +0.0178 [+0.0080, +0.0290] |
+| oracle@16 | +0.0136 | 0.976 | 1.00 | 4,096 | 91 | -0.0171 [-0.0327, -0.0039] | +0.0140 [+0.0057, +0.0237] |
+| oracle@32 | +0.0112 | 0.979 | 1.00 | 8,192 | 171 | -0.0195 [-0.0348, -0.0064] | +0.0116 [+0.0039, +0.0205] |
+| oracle@64 | +0.0108 | 0.979 | 1.00 | 16,384 | 320 | -0.0200 [-0.0358, -0.0060] | +0.0111 [+0.0044, +0.0192] |
+| oracle@128 | +0.0102 | 0.982 | 1.00 | 32,768 | 594 | -0.0206 [-0.0372, -0.0058] | +0.0105 [+0.0041, +0.0178] |
+| s1_layer@16 | +0.0293 | 0.954 | 0.31 | 4,096 | 16 | -0.0015 [-0.0098, +0.0073] | +0.0297 [+0.0124, +0.0509] |
+| s1_layer@32 | +0.0303 | 0.955 | 0.36 | 8,192 | 32 | -0.0005 [-0.0100, +0.0107] | +0.0306 [+0.0123, +0.0554] |
+| s1_layer@64 | +0.0235 | 0.965 | 0.41 | 16,384 | 64 | -0.0073 [-0.0171, +0.0041] | +0.0238 [+0.0074, +0.0478] |
+| s1_layer@128 | +0.0135 | 0.969 | 0.47 | 32,768 | 128 | -0.0173 [-0.0331, -0.0045] | +0.0138 [+0.0039, +0.0247] |
+
+## Bytes
+
+Per pause on average: bf16 history 2,243 MB; resident int2 0.200 and int3 0.262 of bf16; uniform int3's one-time extra reload over int2: 139 MB (0.062 of bf16).
+
+Moved per turn = bytes fetched at every step, summed over the turn's steps (no reuse across steps). Unique per turn = distinct (layer, head, token) pairs fetched over the turn (what a fetch cache would move). Both are shown as MB and as a multiple of int3's one-time extra reload on the same pause. Resident = int2 history + one step's fetched set, as a fraction of bf16, next to resident int3.
+
+| scheme | moved / turn (MB) | x int3 extra | unique / turn (MB) | x int3 extra | resident | resident int3 |
+|---|---|---|---|---|---|---|
+| fetch_all | 95,006.3 | 680.26 | 2,231.8 | 16.00 | 1.1941 | 0.2625 |
+| s1@16 | 85.0 | 0.77 | 28.5 | 0.26 | 0.2015 | 0.2625 |
+| s1@32 | 170.1 | 1.53 | 49.5 | 0.44 | 0.2026 | 0.2625 |
+| s1@64 | 340.1 | 3.06 | 84.6 | 0.75 | 0.2049 | 0.2625 |
+| s1@128 | 680.3 | 6.12 | 141.9 | 1.25 | 0.2095 | 0.2625 |
+| s2@16 | 85.0 | 0.77 | 28.3 | 0.26 | 0.2015 | 0.2625 |
+| s2@32 | 170.1 | 1.53 | 49.2 | 0.44 | 0.2026 | 0.2625 |
+| s2@64 | 340.1 | 3.06 | 84.1 | 0.75 | 0.2049 | 0.2625 |
+| s2@128 | 680.3 | 6.12 | 141.0 | 1.24 | 0.2095 | 0.2625 |
+| sens_a@16 | 85.0 | 0.77 | 28.6 | 0.26 | 0.2015 | 0.2625 |
+| sens_a@32 | 170.1 | 1.53 | 49.7 | 0.45 | 0.2026 | 0.2625 |
+| sens_a@64 | 340.1 | 3.06 | 85.0 | 0.76 | 0.2049 | 0.2625 |
+| sens_a@128 | 680.3 | 6.12 | 142.6 | 1.26 | 0.2095 | 0.2625 |
+| sens_b@16 | 85.0 | 0.77 | 28.4 | 0.26 | 0.2015 | 0.2625 |
+| sens_b@32 | 170.1 | 1.53 | 49.6 | 0.44 | 0.2026 | 0.2625 |
+| sens_b@64 | 340.1 | 3.06 | 85.2 | 0.76 | 0.2049 | 0.2625 |
+| sens_b@128 | 680.3 | 6.12 | 143.4 | 1.26 | 0.2095 | 0.2625 |
+| oracle@16 | 85.0 | 0.77 | 28.2 | 0.26 | 0.2015 | 0.2625 |
+| oracle@32 | 170.1 | 1.53 | 49.0 | 0.44 | 0.2026 | 0.2625 |
+| oracle@64 | 340.1 | 3.06 | 83.7 | 0.75 | 0.2049 | 0.2625 |
+| oracle@128 | 680.3 | 6.12 | 140.1 | 1.24 | 0.2095 | 0.2625 |
+| s1_layer@16 | 85.0 | 0.77 | 36.4 | 0.33 | 0.2015 | 0.2625 |
+| s1_layer@32 | 170.1 | 1.53 | 61.7 | 0.55 | 0.2026 | 0.2625 |
+| s1_layer@64 | 340.1 | 3.06 | 102.4 | 0.91 | 0.2049 | 0.2625 |
+| s1_layer@128 | 680.3 | 6.12 | 166.3 | 1.45 | 0.2095 | 0.2625 |
+
+wrote results/gate_fetch/llama-3.1-8b-instruct/summary.md
+memory.used [MiB]
+0 MiB
+>> done: results/gate_fetch_results.tgz (summary: results/gate_fetch/llama-3.1-8b-instruct/summary.md)
