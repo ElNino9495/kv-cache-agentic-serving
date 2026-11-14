@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
 # Per-step fetch study on a CloudLab GPU node (plain bash, no Slurm). Same code and flags as
-# greatlakes_fetch.sbatch.
+# greatlakes_fetch.sbatch. Runs base int2 and then base int1 back to back (BASES="2 1"); each base gets a
+# smoke check, the full run, its summary and the xarray diagnostic, in results/gate_fetch/<model>-base<b>/.
 #
 #   cd kv_manager && bash experiments/gate/cloudlab_fetch.sh            # setup, then start the run in tmux
 #   bash experiments/gate/cloudlab_fetch.sh setup                       # only setup (venv, models, data)
 #   MODE=diagnose bash experiments/gate/cloudlab_fetch.sh               # only the xarray diagnostic
+#   BASES=1 bash experiments/gate/cloudlab_fetch.sh                     # only the 1-bit base
+#   PREFILL_FETCH_K=128 bash experiments/gate/cloudlab_fetch.sh         # also fetch during the tool-output prefill
 #   RESUME=1 bash experiments/gate/cloudlab_fetch.sh                    # continue an interrupted run
 #   tmux attach -t fetch                                                # watch it (detach: Ctrl-b d)
 #
@@ -21,6 +24,8 @@ DIAG_PAUSE="${DIAG_PAUSE:-pydata__xarray-4687:85}"
 CHECK_NLL_TOL="${CHECK_NLL_TOL:-0.05}"        # smoke run stops if per-step and sdpa NLL differ by more
 SESSION="${SESSION:-fetch}"
 RESUME="${RESUME:-0}"
+BASES="${BASES:-2 1}"                        # base precisions, run in this order
+PREFILL_FETCH_K="${PREFILL_FETCH_K:-0}"      # > 0: top-k fetch per chunk during the tool-output prefill
 EXTRA_ARGS="${EXTRA_ARGS:-}"                 # passed to run_fetch.py, e.g. "--ks 16 64"
 
 KV_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -74,26 +79,35 @@ run() {
   PY="$VENV/bin/python"
   nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv
   date
-  if [ "$MODE" = full ] || [ "$MODE" = both ]; then
-    if [ "$RESUME" = 1 ]; then
-      # shellcheck disable=SC2086
-      $PY -m experiments.gate.run_fetch --target "$TARGET" --resume $EXTRA_ARGS
-    else
-      # shellcheck disable=SC2086
-      $PY -m experiments.gate.run_fetch --target "$TARGET" --max-samples 1 --check-nll-tol "$CHECK_NLL_TOL" \
-        --out-dir results/gate_fetch_smoke $EXTRA_ARGS
-      # shellcheck disable=SC2086
-      $PY -m experiments.gate.run_fetch --target "$TARGET" $EXTRA_ARGS
+  for b in $BASES; do
+    name="$SLUG-base$b"
+    common=(--target "$TARGET" --base-bits "$b")
+    if [ "$PREFILL_FETCH_K" != 0 ]; then
+      common+=(--prefill-fetch-k "$PREFILL_FETCH_K")
+      name="$name-pf$PREFILL_FETCH_K"
     fi
-    $PY -m experiments.gate.summarize_fetch --dir "results/gate_fetch/$SLUG"
-  fi
-  if [ "$MODE" = diagnose ] || [ "$MODE" = both ]; then
-    $PY -m experiments.gate.run_fetch --target "$TARGET" --diagnose "$DIAG_PAUSE"
-  fi
+    echo ">> base int$b: results/gate_fetch/$name"
+    if [ "$MODE" = full ] || [ "$MODE" = both ]; then
+      if [ "$RESUME" = 1 ]; then
+        # shellcheck disable=SC2086
+        $PY -m experiments.gate.run_fetch "${common[@]}" --resume $EXTRA_ARGS
+      else
+        # shellcheck disable=SC2086
+        $PY -m experiments.gate.run_fetch "${common[@]}" --max-samples 1 --check-nll-tol "$CHECK_NLL_TOL" \
+          --out-dir "results/gate_fetch_smoke/$name" $EXTRA_ARGS
+        # shellcheck disable=SC2086
+        $PY -m experiments.gate.run_fetch "${common[@]}" $EXTRA_ARGS
+      fi
+      $PY -m experiments.gate.summarize_fetch --dir "results/gate_fetch/$name"
+    fi
+    if [ "$MODE" = diagnose ] || [ "$MODE" = both ]; then
+      $PY -m experiments.gate.run_fetch "${common[@]}" --diagnose "$DIAG_PAUSE"
+    fi
+    date
+  done
   tar czf results/gate_fetch_results.tgz results/gate_fetch
   nvidia-smi --query-gpu=memory.used --format=csv
-  date
-  echo ">> done: $KV_DIR/results/gate_fetch_results.tgz (summary: results/gate_fetch/$SLUG/summary.md)"
+  echo ">> done: $KV_DIR/results/gate_fetch_results.tgz (summaries: results/gate_fetch/$SLUG-base*/summary.md)"
 }
 
 case "${1:-all}" in
@@ -107,7 +121,7 @@ case "${1:-all}" in
     fi
     tmux new-session -d -s "$SESSION" \
       "DATA_ROOT='$DATA_ROOT' TARGET='$TARGET' MODE='$MODE' DIAG_PAUSE='$DIAG_PAUSE' CHECK_NLL_TOL='$CHECK_NLL_TOL' \
-       RESUME='$RESUME' EXTRA_ARGS='$EXTRA_ARGS' bash '$SCRIPT' run 2>&1 | tee -a '$LOG'; \
+       RESUME='$RESUME' EXTRA_ARGS='$EXTRA_ARGS' BASES='$BASES' PREFILL_FETCH_K='$PREFILL_FETCH_K' bash '$SCRIPT' run 2>&1 | tee -a '$LOG'; \
        echo '>> finished; press Enter to close'; read"
     echo ">> started in tmux session '$SESSION' (log: $LOG)"
     echo "   attach: tmux attach -t $SESSION    detach: Ctrl-b d"

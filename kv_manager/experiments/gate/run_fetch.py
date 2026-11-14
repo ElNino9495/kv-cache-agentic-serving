@@ -27,12 +27,24 @@ per-token log-prob difference is only reported (bf16 rounding makes single token
 k = 16, 64, 128 (plus bf16 and int2) and logs, for every step and layer, which tokens each scheme fetched
 and the attention mass on them (diag_<instance>_t<turn>/: steps.csv, fetch.csv, fetch_idx.pt, report.md).
 
-Outputs (in --out-dir, default results/gate_fetch/<model>/): metrics.csv (pause x row), samples.csv.
+--base-bits 1 runs the same rows on an int1 base (SpeCache's modified 1-bit quantizer, fakequant.py) with
+uniform int1, int2 and int3 rows; every "int2" above then reads "int1". --ks may include "match": k chosen
+per pause so that the base history + one step's fetched set uses the GPU memory of uniform int(base + 1)
+(int1 + fetch vs int2, int2 + fetch vs int3).
+
+--prefill-fetch-k K (> 0) prefills the tool output in --prefill-chunk token chunks with the top-K history
+tokens per KV head and layer (by the chunk's own queries over base keys) swapped to bf16 for each chunk.
+The fetch rows and fetch_all start from that prefill; the uniform base row and fetch_all_noprefill keep the
+plain base prefill, so the lift of the prefill ceiling is measured in the same run.
+
+Outputs (in --out-dir, default results/gate_fetch/<model>-base<b>[-pf<K>]/): metrics.csv (pause x row),
+samples.csv.
 
     cd kv_manager
     CUDA_VISIBLE_DEVICES=0 python -m experiments.gate.run_fetch --max-samples 1 --check-nll-tol 0.05  # smoke
     CUDA_VISIBLE_DEVICES=0 python -m experiments.gate.run_fetch
     CUDA_VISIBLE_DEVICES=0 python -m experiments.gate.run_fetch --diagnose
+    CUDA_VISIBLE_DEVICES=0 python -m experiments.gate.run_fetch --base-bits 1
     python -m experiments.gate.summarize_fetch
 """
 
@@ -43,29 +55,33 @@ from pathlib import Path
 import torch
 
 from experiments.gate import data
-from experiments.gate.fetch_attn import default_rows, diagnostic_rows, run_pause
+from experiments.gate.fetch_attn import MATCH, default_rows, diagnostic_rows, run_pause
 from experiments.gate.run_gate import ROOT, _append, load_model, model_slug, read_pauses
 
 DIAG_DEFAULT = "pydata__xarray-4687:85"
 
 
 def _label(r):
-    return r.name + (f"@{r.k}" if r.k else "")
+    return r.name + ("@match" if r.k == MATCH else f"@{r.k}" if r.k else "")
 
 
-def write_diagnostics(out: Path, tok, rows, s, res) -> None:
+def _ks(values):
+    return [MATCH if v == "match" else int(v) for v in values]
+
+
+def write_diagnostics(out: Path, tok, rows, s, res, base: str) -> None:
     """steps.csv (per row and step: log-probs), fetch.csv (per row, step, layer, KV head: masses),
     fetch_idx.pt (the fetched indices), report.md (where each scheme loses against int2, and why)."""
     out.mkdir(parents=True, exist_ok=True)
     names = [_label(r) for r in rows]
-    ref, i2 = names.index("bf16"), names.index("int2")
+    ref, i2 = names.index("bf16"), names.index(base)
     T = res["T"]
     tgt = s["target_ids"][:T]
     lp = res["logp"]
     with open(out / "steps.csv", "w", newline="") as f:
         w = csv.writer(f)
-        w.writerow(["scheme", "step", "token_id", "token", "logp", "logp_bf16", "logp_int2",
-                    "dlogp_vs_bf16", "dlogp_vs_int2"])
+        w.writerow(["scheme", "step", "token_id", "token", "logp", "logp_bf16", f"logp_{base}",
+                    "dlogp_vs_bf16", f"dlogp_vs_{base}"])
         for i, n in enumerate(names):
             for j in range(T):
                 w.writerow([n, j, tgt[j], tok.decode([tgt[j]]), f"{lp[i, j]:.5f}", f"{lp[ref, j]:.5f}",
@@ -92,12 +108,13 @@ def write_diagnostics(out: Path, tok, rows, s, res) -> None:
         a["k"] += r["idx"].shape[1]
         a["n"] += 1
     lines = [f"# Fetch diagnostics: {s['instance_id']} turn {s['turn']}", "",
-             f"History {res['P']} tokens, {T} teacher-forced steps. Masses are attention probability over the "
+             f"Base {base}. History {res['P']} tokens, {T} teacher-forced steps. `int2` below means the base "
+             f"({base}). Masses are attention probability over the "
              "history middle (the quantized tokens), averaged over query heads, KV heads and layers: "
              "`fetched (actual)` = mass on the fetched set in the row's own attention after fetching; "
              "`fetched (bf16)` = mass the current bf16 attention puts on the fetched set; `oracle (bf16)` = the "
              "same for the best set of that size; `middle int2 / bf16` = total mass on the middle.", "",
-             "| scheme | dNLL vs bf16 | dNLL vs int2 | steps worse than int2 by > 0.5 nats |", "|---|---|---|---|"]
+             f"| scheme | dNLL vs bf16 | dNLL vs {base} | steps worse than {base} by > 0.5 nats |", "|---|---|---|---|"]
     for i, n in enumerate(names):
         d_ref = float((lp[ref] - lp[i]).mean())
         d_i2 = float((lp[i2] - lp[i]).mean())
@@ -109,7 +126,7 @@ def write_diagnostics(out: Path, tok, rows, s, res) -> None:
             continue
         loss = (lp[i2] - lp[i])
         worst = loss.topk(min(5, T)).indices.tolist()
-        lines += [f"## {n}: steps with the largest loss against int2", "",
+        lines += [f"## {n}: steps with the largest loss against {base}", "",
                   "| step | token | log p (row / int2 / bf16) | fetched (actual) | fetched (bf16) | oracle (bf16) | "
                   "overlap / k | middle int2 / bf16 |", "|---|---|---|---|---|---|---|---|"]
         for j in worst:
@@ -131,7 +148,13 @@ def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--target", default="unsloth/Llama-3.1-8B-Instruct")
     p.add_argument("--samples-from", default=str(ROOT / "results" / "gate" / "samples.csv"))
-    p.add_argument("--ks", nargs="*", type=int, default=[16, 32, 64, 128])
+    p.add_argument("--ks", nargs="*", default=["16", "32", "64", "128", "match"],
+                   help='fetched tokens per KV head and layer; "match" = equal memory to uniform int(base + 1)')
+    p.add_argument("--base-bits", type=int, default=2, choices=[1, 2])
+    p.add_argument("--prefill-fetch-k", type=int, default=0,
+                   help="fetch this many history tokens per KV head and layer per chunk during the tool-output "
+                        "prefill (0 = plain prefill over the base history)")
+    p.add_argument("--prefill-chunk", type=int, default=64)
     p.add_argument("--max-steps", type=int, default=64, help="target tokens decoded per pause")
     p.add_argument("--block", type=int, default=16)
     p.add_argument("--recent", type=int, default=64)
@@ -149,7 +172,11 @@ def main():
     p.add_argument("--resume", action="store_true")
     args = p.parse_args()
 
-    out_dir = Path(args.out_dir or ROOT / "results" / "gate_fetch" / model_slug(args.target))
+    run_name = model_slug(args.target) + f"-base{args.base_bits}" + (f"-pf{args.prefill_fetch_k}"
+                                                                      if args.prefill_fetch_k else "")
+    out_dir = Path(args.out_dir or ROOT / "results" / "gate_fetch" / run_name)
+    base = f"int{args.base_bits}"
+    pf = args.prefill_fetch_k > 0
     out_dir.mkdir(parents=True, exist_ok=True)
     metrics_path, samples_path = out_dir / "metrics.csv", out_dir / "samples.csv"
     diag = None
@@ -172,9 +199,10 @@ def main():
         model = model.float()
     fmt = data.chat_format(model.config.model_type)
     max_ctx = fmt.native_context if args.max_context is None else args.max_context
-    rows = diagnostic_rows() if diag else default_rows(args.ks)
-    print(f"{len(rows)} rows: {', '.join(sorted({r.name for r in rows}))}"
-          + ("" if diag else f"; ks {args.ks}"), flush=True)
+    rows = (diagnostic_rows(base_bits=args.base_bits, prefill=pf) if diag
+            else default_rows(_ks(args.ks), base_bits=args.base_bits, prefill=pf))
+    print(f"{len(rows)} rows on base {base}{f', prefill fetch k={args.prefill_fetch_k}' if pf else ''}: "
+          f"{', '.join(sorted({r.name for r in rows}))}" + ("" if diag else f"; ks {args.ks}"), flush=True)
 
     pauses = {diag[0]: [diag[1]]} if diag else read_pauses(Path(args.samples_from))
     n_done = 0
@@ -196,14 +224,15 @@ def main():
             if t0:
                 t0.record()
             res = run_pause(model, hist, fresh, tgt, rows, block=args.block, recent=args.recent,
-                            max_steps=args.max_steps, check=diag is None, diag=diag is not None)
+                            max_steps=args.max_steps, check=diag is None, diag=diag is not None,
+                            base_bits=args.base_bits, prefill_k=args.prefill_fetch_k, prefill_chunk=args.prefill_chunk)
             secs = None
             if t0:
                 t1.record()
                 torch.cuda.synchronize()
                 secs = t0.elapsed_time(t1) / 1e3
             if diag:
-                write_diagnostics(out_dir / f"diag_{instance_id}_t{s['turn']}", tok, rows, s, res)
+                write_diagnostics(out_dir / f"diag_{instance_id}_t{s['turn']}", tok, rows, s, res, base)
                 return
 
             names = [r.name for r in rows]
@@ -215,29 +244,31 @@ def main():
                     continue
                 out.append({"instance_id": instance_id, "turn": s["turn"], "hist_len": res["P"],
                             "fresh_len": res["F"], "steps": res["T"], "scheme": r.name, "policy": r.policy,
-                            "k": r.k, "per_layer": int(r.per_layer),
+                            "per_layer": int(r.per_layer), "base_bits": args.base_bits,
+                            "prefill_fetch_k": args.prefill_fetch_k, "tool_prefill": r.fresh,
                             "delta_nll": float(-res["logp"][i].mean()) - ref_nll,
                             "top1_agree": float((res["pred"][i] == res["pred"][ref]).float().mean()),
-                            **res["rows"][i], "bf16_bytes": res["bf16_bytes"],
-                            "int2_bytes": res["int2_bytes"], "int3_bytes": res["int3_bytes"]})
+                            **res["rows"][i], **{b: res[b] for b in ("bf16_bytes", "base_bytes", "int1_bytes",
+                                                                       "int2_bytes", "int3_bytes")}})
             _append(metrics_path, out)
             chk = {k: v for k, v in res.items() if k.startswith("check_")}
             nll_diff = max(abs(chk[f"check_{n}_nll_perstep"] - chk[f"check_{n}_nll_batched"])
-                           for n in ("bf16", "int2"))
+                           for n in ("bf16", "base"))
             chk["check_max_nll_diff"] = nll_diff
             _append(samples_path, [{"instance_id": instance_id, "turn": s["turn"], "hist_len": res["P"],
                                     "fresh_len": res["F"], "steps": res["T"], "ref_nll": ref_nll,
-                                    "seconds": secs, "model": args.target, **chk}])
-            by = {o["scheme"] + (f"@{o['k']}" if o["k"] else ""): o["delta_nll"] for o in out}
+                                    "seconds": secs, "model": args.target, "base_bits": args.base_bits,
+                                    "prefill_fetch_k": args.prefill_fetch_k, "k_match": res["k_match"], **chk}])
+            by = {o["scheme"] + (f"@{o['k_label']}" if o["k_label"] != "0" else ""): o["delta_nll"] for o in out}
             print(f"{instance_id} turn {s['turn']}: hist {res['P']}, {res['T']} steps"
                   + (f", {secs:.1f} s" if secs else "")
-                  + f" | int2 {by['int2']:+.4f} int3 {by['int3']:+.4f} fetch_all {by['fetch_all']:+.4f}"
-                  + " | " + " ".join(f"{n}@64 {by[f'{n}@64']:+.4f}"
-                                     for n in ("s1", "s2", "spec", "s2sens_a", "s2sens_b", "oracle")
-                                     if f"{n}@64" in by)
-                  + f" | check NLL diff {nll_diff:.2e}, max|dlogp| bf16 "
-                  f"{chk.get('check_bf16_max_abs_logp', float('nan')):.2e} int2 "
-                  f"{chk.get('check_int2_max_abs_logp', float('nan')):.2e}", flush=True)
+                  + " | " + " ".join(f"{n} {by[n]:+.4f}" for n in ("int1", "int2", "int3", "fetch_all") if n in by)
+                  + " | " + " ".join(f"{n} {by[n]:+.4f}" for n in
+                                     [f"{p_}@{k_}" for k_ in ("64", "match")
+                                      for p_ in ("s1", "s2", "spec", "s2sens_b", "oracle")] if n in by)
+                  + f" | k_match {res['k_match']} | check NLL diff {nll_diff:.2e}, max|dlogp| bf16 "
+                  f"{chk.get('check_bf16_max_abs_logp', float('nan')):.2e} {base} "
+                  f"{chk.get('check_base_max_abs_logp', float('nan')):.2e}", flush=True)
             if args.check_nll_tol and nll_diff > args.check_nll_tol:
                 raise SystemExit(f"per-step vs sdpa NLL check failed: {nll_diff:.3e} > {args.check_nll_tol}")
             del hist, fresh, tgt, res

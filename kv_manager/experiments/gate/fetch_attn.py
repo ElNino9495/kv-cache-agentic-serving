@@ -34,6 +34,17 @@ Selection policies (top-k over the quantized middle tokens, per KV head unless p
             with a bf16 tool-output prefill it equals the bf16 row exactly: the noise_ctrl row)
 d = bf16 - int2. per_layer: one set per layer, scored by summing over all heads, used by every head.
 
+Base precision (--base-bits): the history base is int2 by default; with base_bits=1 it is int1 with
+SpeCache's modified 1-bit quantizer (fakequant.py), every "int2" above reads "int1", and uniform int2 and
+int3 run as references. Rows with k = -1 ("match") fetch as many tokens per KV head and layer as make
+the GPU-resident history (base + one step's fetched set) equal to uniform int(base + 1).
+
+Prefill fetch (prefill_k > 0): the tool output is prefilled in chunks over the base history, and for each
+chunk the top-k history tokens per KV head and layer by the chunk's own queries (attention over base keys,
+summed over the chunk's queries and the query heads of the KV head) are swapped to bf16 for that chunk
+only. The fetch rows and fetch_all then start from this prefill ("pf" tool-output group); the uniform base
+row and fetch_all_noprefill keep the plain base prefill, so the ceiling lift is measured in the same run.
+
 Shadow rows (spec): the shadow of a spec row decodes the guessed next token at position +1. It sees
 the same history view as its spec row (int2 + the spec row's fetched set at that step), the same tool
 output, the spec row's generated tokens including the current one, and itself; its own KV is
@@ -68,21 +79,32 @@ class Row:
     shadow: bool = False  # speculative-token row paired with the spec row of the same k / per_layer
 
 
-def default_rows(ks=(16, 32, 64, 128)) -> list[Row]:
-    rows = [Row("bf16", "bf16", "bf16"), Row("int2"), Row("int3", "int3", "int3"), Row("fetch_all", policy="all"),
-            # noise-floor control: equal to the bf16 row in exact arithmetic, computed through the fetch path,
-            # so its dNLL is the bf16 rounding noise of the per-step path on that pause
-            Row("noise_ctrl", hist="int2", fresh="bf16", policy="all")]
+MATCH = -1  # k resolved per pause so that base + fetched set uses the memory of uniform int(base + 1)
+
+
+def default_rows(ks=(16, 32, 64, 128, MATCH), base_bits=2, prefill=False) -> list[Row]:
+    B = f"int{base_bits}"
+    fr = "pf" if prefill else B
+    rows = [Row("bf16", "bf16", "bf16"), Row(B, B, B)]
+    rows += [Row(f"int{b}", f"int{b}", f"int{b}") for b in (2, 3) if b != base_bits]
+    rows += [Row("fetch_all", B, fr, policy="all"),
+             # noise-floor control: equal to the bf16 row in exact arithmetic, computed through the fetch path,
+             # so its dNLL is the bf16 rounding noise of the per-step path on that pause
+             Row("noise_ctrl", B, "bf16", policy="all")]
+    if prefill:
+        rows.append(Row("fetch_all_noprefill", B, B, policy="all"))
     for k in ks:
-        rows += [Row(p, policy=p, k=k) for p in ("s1", "s2", "sens_a", "sens_b", "oracle", "s2sens_a", "s2sens_b")]
-        rows.append(Row("s1_layer", policy="s1", k=k, per_layer=True))
-        rows += [Row("spec", policy="spec", k=k), Row("spec_shadow", policy="spec", k=k, shadow=True)]
+        rows += [Row(p, B, fr, policy=p, k=k) for p in ("s1", "s2", "sens_a", "sens_b", "oracle", "s2sens_a", "s2sens_b")]
+        rows.append(Row("s1_layer", B, fr, policy="s1", k=k, per_layer=True))
+        rows += [Row("spec", B, fr, policy="spec", k=k), Row("spec_shadow", B, fr, policy="spec", k=k, shadow=True)]
     return rows
 
 
-def diagnostic_rows(ks=(16, 64, 128)) -> list[Row]:
-    return [Row("bf16", "bf16", "bf16"), Row("int2")] + \
-           [Row(p, policy=p, k=k) for p in ("s1", "s2", "oracle") for k in ks]
+def diagnostic_rows(ks=(16, 64, 128), base_bits=2, prefill=False) -> list[Row]:
+    B = f"int{base_bits}"
+    fr = "pf" if prefill else B
+    return [Row("bf16", "bf16", "bf16"), Row(B, B, B)] + \
+           [Row(p, B, fr, policy=p, k=k) for p in ("s1", "s2", "oracle") for k in ks]
 
 
 def first_order_norm(dV, dK, V2, q, o, scaling):
@@ -97,8 +119,8 @@ def first_order_norm(dV, dK, V2, q, o, scaling):
 
 
 class FetchContext:
-    def __init__(self, rows, hist, fresh, lo, hi, n_layers, max_tokens):
-        self.rows, self.hist, self.fresh = rows, hist, fresh
+    def __init__(self, rows, hist, fresh, lo, hi, n_layers, max_tokens, base="int2"):
+        self.rows, self.hist, self.fresh, self.base = rows, hist, fresh, base
         self.lo, self.hi, self.n_layers, self.max_tokens = lo, hi, n_layers, max_tokens
         any_k = next(iter(hist.values()))[0][0]
         dev = any_k.device
@@ -109,12 +131,14 @@ class FetchContext:
         def ix(cond):
             return torch.tensor([i for i, r in enumerate(rows) if cond(r)], device=dev, dtype=torch.long)
 
-        # shadow i reads its spec row's generated KV and selection scores
+        # shadow i reads its spec row's generated KV and selection scores; it directly follows that row
         self.pair = {}
         for i, r in enumerate(rows):
             if r.shadow:
-                self.pair[i] = next(j for j, s in enumerate(rows) if not s.shadow and s.policy == "spec"
-                                    and s.k == r.k and s.per_layer == r.per_layer)
+                s = rows[i - 1] if i else None
+                assert s is not None and s.policy == "spec" and not s.shadow and s.k == r.k \
+                    and s.per_layer == r.per_layer, "a spec_shadow row must directly follow its spec row"
+                self.pair[i] = i - 1
         self.score_src = [self.pair.get(i, i) for i in range(R)]
         self.gen_src = torch.tensor(self.score_src, device=dev, dtype=torch.long)
         self.is_shadow = torch.tensor([r.shadow for r in rows], device=dev)
@@ -141,7 +165,7 @@ class FetchContext:
         if self.err[l] is None:
             lo, hi = self.lo, self.hi
             K16, V16 = (x[:, lo:hi].float() for x in self.hist["bf16"][l])
-            K2, V2 = (x[:, lo:hi].float() for x in self.hist["int2"][l])
+            K2, V2 = (x[:, lo:hi].float() for x in self.hist[self.base][l])
             self.err[l] = {"dk": (K16 - K2).norm(dim=-1), "dv": (V16 - V2).norm(dim=-1)}
         return self.err[l]
 
@@ -183,11 +207,11 @@ def fetch_attention(module, query, key, value, attention_mask, scaling, dropout=
         """Attention probabilities over the middle history tokens, (n, kvh, G, hi - lo)."""
         return torch.cat([lhist, lt[rows]], dim=-1).softmax(dim=-1)[..., lo:hi]
 
-    def int2_output(rows):
-        """Attention output of `rows` with the int2 history and no fetch, (n, kvh, G, d)."""
+    def base_output(rows, fg):
+        """Attention output of `rows` with the base history and no fetch, (n, kvh, G, d)."""
         p = torch.cat([lh[rows], lt[rows]], dim=-1).softmax(dim=-1)
-        out = torch.einsum("rkgp,kpd->rkgd", p[..., :P], Vf["int2"])
-        out += torch.einsum("rkgf,kfd->rkgd", p[..., P:P + F], ctx.fresh["int2"][l][1].float())
+        out = torch.einsum("rkgp,kpd->rkgd", p[..., :P], Vf[ctx.base])
+        out += torch.einsum("rkgf,kfd->rkgd", p[..., P:P + F], ctx.fresh[fg][l][1].float())
         out += torch.einsum("rkgt,rktd->rkgd", p[..., P + F:P + F + t + 1], gv[src[rows], :, :t + 1].float())
         return out
 
@@ -223,9 +247,9 @@ def fetch_attention(module, query, key, value, attention_mask, scaling, dropout=
                         score = (pr * (e["dv"][None, :, None, :] + qn * e["dk"][None, :, None, :] * scaling)).sum(dim=2)
                     else:  # s2sens_b
                         K16m, V16m = (x[:, lo:hi].float() for x in ctx.hist["bf16"][l])
-                        K2m, V2m = (x[:, lo:hi].float() for x in ctx.hist["int2"][l])
-                        score = (pr * first_order_norm(V16m - V2m, K16m - K2m, V2m, q[rows], int2_output(rows),
-                                                       scaling)).sum(dim=2)
+                        K2m, V2m = (x[:, lo:hi].float() for x in ctx.hist[ctx.base][l])
+                        score = (pr * first_order_norm(V16m - V2m, K16m - K2m, V2m, q[rows],
+                                                       base_output(rows, ctx.rows[rr[0]].fresh), scaling)).sum(dim=2)
                 else:  # oracle
                     score = mid_probs(l16[[pos16[i] for i in rr]], rows).sum(dim=2)
                 if per_layer:
@@ -306,7 +330,7 @@ def fetch_attention(module, query, key, value, attention_mask, scaling, dropout=
             score = (pr * (e["dv"][None, :, None, :] + qn * e["dk"][None, :, None, :] * scaling)).sum(dim=2)
         else:  # sens_b
             K16m, V16m = (x[:, lo:hi].float() for x in ctx.hist["bf16"][l])
-            K2m, V2m = (x[:, lo:hi].float() for x in ctx.hist["int2"][l])
+            K2m, V2m = (x[:, lo:hi].float() for x in ctx.hist[ctx.base][l])
             score = (pr * first_order_norm(V16m - V2m, K16m - K2m, V2m, q[rows], o[rows], scaling)).sum(dim=2)
         for j, i in enumerate(rows.tolist()):
             if pol == "spec":
@@ -334,6 +358,83 @@ def fetch_mode(model, ctx):
         _CTX = None
 
 
+_PCTX = None
+PREFILL_ATTN_NAME = "gate_prefill_fetch"
+
+
+class PrefillContext:
+    """Chunked tool-output prefill over the base history with a per-chunk top-k bf16 fetch."""
+
+    def __init__(self, hist_base, hist16, lo, hi, k, n_layers):
+        self.hist_base, self.hist16, self.lo, self.hi, self.k = hist_base, hist16, lo, hi, k
+        self.fk = [[] for _ in range(n_layers)]
+        self.fv = [[] for _ in range(n_layers)]
+        self.pairs = 0  # (layer, KV head, token) fetched over the whole prefill
+        self.last_idx = {}
+
+
+def prefill_fetch_attention(module, query, key, value, attention_mask, scaling, dropout=0.0, **kwargs):
+    ctx = _PCTX
+    l = module.layer_idx
+    _, H, c, d = query.shape
+    kvh = key.shape[1]
+    G = H // kvh
+    lo, hi = ctx.lo, ctx.hi
+    q = query[0].float().reshape(kvh, G, c, d)
+    Kb, Vb = (x.float() for x in ctx.hist_base[l])
+    K16, V16 = (x.float() for x in ctx.hist16[l])
+    P = Kb.shape[1]
+    kc, vc = key[0].float(), value[0].float()
+    Kp = torch.cat(ctx.fk[l], dim=1).float() if ctx.fk[l] else kc[:, :0]
+    Vp = torch.cat(ctx.fv[l], dim=1).float() if ctx.fv[l] else vc[:, :0]
+    Fp = Kp.shape[1]
+    lh = torch.einsum("kgcd,kpd->kgcp", q, Kb) * scaling
+    lf = torch.einsum("kgcd,kfd->kgcf", q, Kp) * scaling
+    causal = torch.ones(c, c, dtype=torch.bool, device=q.device).tril()
+    lc = (torch.einsum("kgcd,ked->kgce", q, kc) * scaling).masked_fill(~causal, float("-inf"))
+    top = None
+    if ctx.k > 0:
+        k = min(ctx.k, hi - lo)
+        score = torch.cat([lh, lf, lc], dim=-1).softmax(dim=-1)[..., lo:hi].sum(dim=(1, 2))  # (kvh, mid)
+        top = score.topk(k, dim=-1).indices + lo                                            # (kvh, k)
+        hk = torch.arange(kvh, device=q.device)[:, None]
+        idx = top[:, None, None, :].expand(-1, G, c, -1)
+        lh.scatter_(-1, idx, torch.einsum("kgcd,kjd->kgcj", q, K16[hk, top]) * scaling)
+        ctx.pairs += kvh * k
+        ctx.last_idx[l] = top
+    p = torch.cat([lh, lf, lc], dim=-1).softmax(dim=-1)
+    out = (torch.einsum("kgcp,kpd->kgcd", p[..., :P], Vb) + torch.einsum("kgcf,kfd->kgcd", p[..., P:P + Fp], Vp)
+           + torch.einsum("kgce,ked->kgcd", p[..., P + Fp:], vc))
+    if top is not None:
+        out += torch.einsum("kgcj,kjd->kgcd", p[..., :P].gather(-1, idx), V16[hk, top] - Vb[hk, top])
+    ctx.fk[l].append(key[0])
+    ctx.fv[l].append(value[0])
+    return out.reshape(H, c, d).permute(1, 0, 2)[None].to(query.dtype), None
+
+
+AttentionInterface.register(PREFILL_ATTN_NAME, prefill_fetch_attention)
+
+
+@torch.no_grad()
+def prefill_with_fetch(model, ids, hist_base, hist16, lo, hi, k, chunk, pos0):
+    """Prefill `ids` (1, F) at positions pos0.. over the base history, fetching the top-k history tokens
+    per KV head and layer to bf16 for each chunk. Returns ([(K, V)] per layer, (kvh, F, d)), fetched pairs."""
+    global _PCTX
+    ctx = PrefillContext(hist_base, hist16, lo, hi, k, model.config.num_hidden_layers)
+    prev_impl = model.config._attn_implementation
+    _PCTX = ctx
+    model.set_attn_implementation(PREFILL_ATTN_NAME)
+    try:
+        for s in range(0, ids.shape[1], chunk):
+            x = ids[:, s:s + chunk]
+            pos = torch.arange(pos0 + s, pos0 + s + x.shape[1], device=ids.device)[None]
+            model(input_ids=x, position_ids=pos, use_cache=False, logits_to_keep=1)
+    finally:
+        model.set_attn_implementation(prev_impl)
+        _PCTX = None
+    return [(torch.cat(a, dim=1), torch.cat(b, dim=1)) for a, b in zip(ctx.fk, ctx.fv)], ctx.pairs
+
+
 def hist_bytes(bits, P, lo, hi, block, kvh, d, n_layers):
     """Reload bytes of the history with the middle blocks at `bits` and everything else bf16."""
     mid = (hi - lo) // block
@@ -342,11 +443,14 @@ def hist_bytes(bits, P, lo, hi, block, kvh, d, n_layers):
 
 @torch.no_grad()
 def run_pause(model, hist_ids, fresh_ids, target_ids, rows, block=16, recent=64, max_steps=64,
-              check=False, diag=False):
+              check=False, diag=False, base_bits=2, prefill_k=0, prefill_chunk=64):
     """Run every row on one pause. Returns per-row log-probs/argmax of the first max_steps target
     tokens, fetch statistics and byte accounting; with check=True also compares the per-step
-    bf16 and int2 rows with sdpa teacher forcing over the same tokens (run_gate.run_turn); with
-    diag=True also returns per-step, per-layer fetch records (diag_records)."""
+    bf16 and base rows with sdpa teacher forcing over the same tokens (run_gate.run_turn); with
+    diag=True also returns per-step, per-layer fetch records (diag_records). Rows with k = MATCH get
+    k resolved so that the base history + one step's fetched set uses uniform int(base + 1)'s memory."""
+    import dataclasses
+
     from experiments.gate.run_gate import prefill, run_turn
 
     cfg = model.config
@@ -361,6 +465,14 @@ def run_pause(model, hist_ids, fresh_ids, target_ids, rows, block=16, recent=64,
     n_recent = min(nb - 1, math.ceil(recent / block))
     lo, hi = block, (nb - n_recent) * block
     assert hi > lo, "history has no quantized middle blocks"
+    base = f"int{base_bits}"
+    pair_bytes = 2 * d * 2  # K + V of one token, one KV head, one layer, bf16
+    nbytes = {f"int{b}_bytes": hist_bytes(b, P, lo, hi, block, kvh, d, n_layers) for b in (1, 2, 3)}
+    nbytes["bf16_bytes"] = P * kvh * d * 4 * n_layers
+    k_match = max(0, min(hi - lo, (nbytes[f"int{base_bits + 1}_bytes"] - nbytes[f"{base}_bytes"])
+                         // (kvh * n_layers * pair_bytes)))
+    k_label = [("match" if r.k == MATCH else str(r.k)) for r in rows]
+    rows = [dataclasses.replace(r, k=k_match) if r.k == MATCH else r for r in rows]
 
     cache, _ = prefill(model, hist_ids)
     K16 = [layer.keys[0] for layer in cache.layers]
@@ -375,14 +487,18 @@ def run_pause(model, hist_ids, fresh_ids, target_ids, rows, block=16, recent=64,
             out.append(y)
         return out
 
-    bases = {r.hist for r in rows} | {r.fresh for r in rows} | {"bf16", "int2"}
+    bases = ({r.hist for r in rows} | {r.fresh for r in rows} | {"bf16", base}) - {"pf"}
     hist = {"bf16": list(zip(K16, V16))}
     for b in sorted(bases - {"bf16"}):
         bits = int(b[3:])
         hist[b] = list(zip(qcopy(K16, bits, "key"), qcopy(V16, bits, "value")))
 
-    fresh = {}
-    for g in sorted({r.fresh for r in rows} | {"int2"}):
+    fresh, prefill_pairs = {}, 0
+    for g in sorted({r.fresh for r in rows} | {base}):
+        if g == "pf":
+            fresh[g], prefill_pairs = prefill_with_fetch(model, fresh_ids[:, :-2], hist[base], hist["bf16"], lo, hi,
+                                                         prefill_k, prefill_chunk, P)
+            continue
         c = DynamicCache()
         for i, (k, v) in enumerate(hist[g]):
             c.update(k[None], v[None], i)
@@ -391,7 +507,7 @@ def run_pause(model, hist_ids, fresh_ids, target_ids, rows, block=16, recent=64,
         del c
 
     R = len(rows)
-    ctx = FetchContext(rows, {b: hist[b] for b in hist}, fresh, lo, hi, n_layers, T + 1)
+    ctx = FetchContext(rows, {b: hist[b] for b in hist}, fresh, lo, hi, n_layers, T + 1, base=base)
     ctx.diag = diag
     shadow = torch.tensor([r.shadow for r in rows], device=dev)
     logp = torch.zeros(R, T, device=dev)
@@ -418,25 +534,25 @@ def run_pause(model, hist_ids, fresh_ids, target_ids, rows, block=16, recent=64,
             pred[:, j] = lg.argmax(dim=-1)
             guess = pred[:, j]  # shadows: guess of target[j + 1]
 
-    pair_bytes = 2 * d * 2  # K + V of one token, one KV head, one layer, bf16
-    res = {"P": P, "F": F_all, "T": T, "lo": lo, "hi": hi,
-           "bf16_bytes": P * kvh * d * 4 * n_layers,
-           "int2_bytes": hist_bytes(2, P, lo, hi, block, kvh, d, n_layers),
-           "int3_bytes": hist_bytes(3, P, lo, hi, block, kvh, d, n_layers),
+    res = {"P": P, "F": F_all, "T": T, "lo": lo, "hi": hi, "base_bits": base_bits, "k_match": k_match,
+           **nbytes, "base_bytes": nbytes[f"{base}_bytes"],
            "logp": logp.cpu(), "pred": pred.cpu(), "rows": []}
     for i, r in enumerate(rows):
         obs = max(float(ctx.st_obs[i]), 1.0)
         union = sum(int(u[i].sum()) for u in ctx.union if u is not None)
         k_res = (hi - lo) if r.policy == "all" else min(r.k, hi - lo)
         sh = next((s for s, p_ in ctx.pair.items() if p_ == i), None)
+        pf = r.fresh == "pf"
         res["rows"].append({
+            "k": r.k, "k_label": k_label[i],
             "fetched_pairs_per_step": float(ctx.st_pairs[i]) / T,
             "distinct_tokens_per_layer_step": float(ctx.st_distinct[i]) / obs,
             "recall_vs_oracle": (float(ctx.st_recall[i]) / obs) if r.policy not in ("none", "all") else float("nan"),
             "moved_bytes_turn": float(ctx.st_pairs[i]) * pair_bytes,
             "unique_bytes_turn": union * pair_bytes,
-            "resident_bytes": (res[f"{r.hist}_bytes"] + (k_res * kvh * n_layers * pair_bytes
-                                                         if r.policy != "none" else 0)),
+            "prefill_moved_bytes": prefill_pairs * pair_bytes if pf else 0,
+            "resident_bytes": (nbytes[f"{r.hist}_bytes"] + (k_res * kvh * n_layers * pair_bytes
+                                                            if r.policy != "none" else 0)),
             "spec_guess_acc": float(guess_hits[sh]) / T if sh is not None else float("nan"),
         })
     res["last_idx"] = {i: v.cpu() for i, v in ctx.last_idx.items()}
@@ -445,13 +561,13 @@ def run_pause(model, hist_ids, fresh_ids, target_ids, rows, block=16, recent=64,
 
     if check:
         names = [r.name for r in rows]
-        for name, base in (("bf16", "bf16"), ("int2", "int2")):
+        for tag, name in (("bf16", "bf16"), ("base", base)):
             if name not in names:
                 continue
             i = names.index(name)
-            lp, _ = run_turn(model, lambda li, b=base: (hist[b][li][0][None], hist[b][li][1][None]),
+            lp, _ = run_turn(model, lambda li, b=name: (hist[b][li][0][None], hist[b][li][1][None]),
                              n_layers, fresh_ids, tgt)
-            res[f"check_{name}_max_abs_logp"] = float((lp.cpu() - logp[i].cpu()).abs().max())
-            res[f"check_{name}_nll_batched"] = float(-lp.mean())
-            res[f"check_{name}_nll_perstep"] = float(-logp[i].mean())
+            res[f"check_{tag}_max_abs_logp"] = float((lp.cpu() - logp[i].cpu()).abs().max())
+            res[f"check_{tag}_nll_batched"] = float(-lp.mean())
+            res[f"check_{tag}_nll_perstep"] = float(-logp[i].mean())
     return res

@@ -57,7 +57,7 @@ def test_k0_equals_uniform_int2_and_oracle_full_equals_fetch_all(model, ids):
 def test_per_step_matches_sdpa_teacher_forcing(model, ids):
     res = _run(model, ids, [Row("bf16", "bf16", "bf16"), Row("int2")], check=True)
     assert res["check_bf16_max_abs_logp"] < 1e-4
-    assert res["check_int2_max_abs_logp"] < 1e-4
+    assert res["check_base_max_abs_logp"] < 1e-4
 
 
 def test_selection_respects_pins_k_and_granularity(model, ids):

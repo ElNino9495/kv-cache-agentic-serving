@@ -101,12 +101,20 @@ schemes run as one batch through a custom attention function (`fetch_attn.py`, c
 brute-force cache rebuild in `tests/test_fetch_partial.py`); every pause re-checks the per-step bf16 and
 int2 rows against sdpa teacher forcing at the NLL level.
 
+`--base-bits 1` runs the same rows on an int1 base with SpeCache's modified 1-bit quantizer (their Eq. 3;
+plain 1-bit KIVI breaks the model), plus uniform int1, int2 and int3. `k = match` rows fetch exactly enough
+tokens that base + fetched set uses the GPU memory of uniform int(base+1), so the summary compares int1 +
+fetch with uniform int2 (and int2 + fetch with int3) at equal resident memory. `--prefill-fetch-k K` also
+fetches the top-K history tokens per chunk during the tool-output prefill, to lift the prefill ceiling
+(`fetch_all` vs `fetch_all_noprefill`).
+
 ```bash
-CUDA_VISIBLE_DEVICES=0 python -m experiments.gate.run_fetch      # results/gate_fetch/<model>/
-CUDA_VISIBLE_DEVICES=0 python -m experiments.gate.run_fetch --diagnose   # per-step fetch logs, xarray t85
-python -m experiments.gate.summarize_fetch                       # summary.md: CIs vs int2/int3/s2, medians, bytes
-# Great Lakes: ACCOUNT=<your_account> bash experiments/gate/greatlakes_fetch.sbatch   (MODE=full|diagnose|both)
-# CloudLab:    bash experiments/gate/cloudlab_fetch.sh   (venv + HF_HOME on /mydata, runs in tmux)
+CUDA_VISIBLE_DEVICES=0 python -m experiments.gate.run_fetch                 # results/gate_fetch/<model>-base2/
+CUDA_VISIBLE_DEVICES=0 python -m experiments.gate.run_fetch --base-bits 1   # results/gate_fetch/<model>-base1/
+CUDA_VISIBLE_DEVICES=0 python -m experiments.gate.run_fetch --diagnose      # per-step fetch logs, xarray t85
+python -m experiments.gate.summarize_fetch --dir results/gate_fetch/<model>-base1   # CIs, equal memory, bytes
+# Great Lakes: ACCOUNT=<your_account> bash experiments/gate/greatlakes_fetch.sbatch   (MODE, BASES, PREFILL_FETCH_K)
+# CloudLab:    bash experiments/gate/cloudlab_fetch.sh   (base 2 then base 1; venv + HF_HOME on /mydata; tmux)
 ```
 
 ## System design

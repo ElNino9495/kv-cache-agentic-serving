@@ -1,4 +1,4 @@
-"""Quantize -> dequantize without bit packing, for bit widths kvm.quant cannot pack yet (int3).
+"""Quantize -> dequantize without bit packing, for bit widths kvm.quant cannot pack yet (int3, int1).
 
 Same arithmetic as kvm.quant.quantize / dequantize: per-channel min/max over a block's tokens for
 keys, per-token min/max over head_dim for values, fp16 scale = (max - min) / (2^bits - 1) clamped at
@@ -8,6 +8,11 @@ gate come from kvm.quant.block_bytes(bits, ...), which is exact for any bits div
 
 For 2 and 4 bits this gives bit-identical results to kvm.quant.roundtrip_blocks (checked in
 tests/test_gate_uniform.py); the gate still calls kvm.quant for those widths.
+
+1 bit uses SpeCache's modified quantizer (arXiv 2503.16163, Eq. 3) instead of KIVI's min/max grid, which
+breaks the model at 1 bit (their Table 5): zero-point (3 min + max) / 4 and scale (max - min) / 2, so the
+two levels sit at min + range/4 and min + 3 range/4 (the bin centres for a uniform distribution). Scale and
+zero-point are still stored as fp16, so block_bytes(1, ...) is the right size.
 """
 
 import torch
@@ -16,13 +21,17 @@ from kvm.quant import KEY_REDUCE_DIM, VALUE_REDUCE_DIM, roundtrip_blocks
 
 
 def fake_quant(x: torch.Tensor, bits: int, reduce_dim: int) -> torch.Tensor:
-    """quantize() followed by dequantize(), minus packing. Returns float32."""
+    """quantize() followed by dequantize(), minus packing (1 bit: SpeCache's quantizer). Returns float32."""
     xf = x.float()
     mn = xf.amin(dim=reduce_dim, keepdim=True)
     mx = xf.amax(dim=reduce_dim, keepdim=True)
     levels = (1 << bits) - 1
-    scale = ((mx - mn) / levels).clamp(min=1e-5).half()
-    zero = mn.half()
+    if bits == 1:  # SpeCache Eq. 3
+        scale = ((mx - mn) / 2).clamp(min=1e-5).half()
+        zero = ((3 * mn + mx) / 4).half()
+    else:
+        scale = ((mx - mn) / levels).clamp(min=1e-5).half()
+        zero = mn.half()
     q = ((xf - zero.float()) / scale.float()).round().clamp(0, levels).to(torch.uint8)
     return q.float() * scale.float() + zero.float()
 
