@@ -55,10 +55,32 @@ from pathlib import Path
 import torch
 
 from experiments.gate import data
-from experiments.gate.fetch_attn import MATCH, default_rows, diagnostic_rows, run_pause
+from experiments.gate.fetch_attn import MATCH, default_rows, diagnostic_rows, estimate_peak_bytes, run_pause
 from experiments.gate.run_gate import ROOT, _append, load_model, model_slug, read_pauses
 
 DIAG_DEFAULT = "pydata__xarray-4687:85"
+GB = 1e9
+
+
+def memory_report(cfg, weight_bytes, rows, samples, args, card_bytes):
+    """Print the estimated peak GPU memory (largest pause) and warn if it exceeds the card. Returns it."""
+    est = {(i, s["turn"]): estimate_peak_bytes(cfg, weight_bytes, len(s["hist_ids"]), len(s["fresh_ids"]), rows,
+                                               base_bits=args.base_bits, max_steps=args.max_steps)
+           for i, s in samples}
+    if not est:
+        return 0
+    worst = max(est, key=est.get)
+    peak = est[worst]
+    hist_len = next(len(s["hist_ids"]) for i, s in samples if (i, s["turn"]) == worst)
+    msg = (f"estimated peak GPU memory {peak / GB:.1f} GB ({len(rows)} rows, base int{args.base_bits}, "
+           f"largest pause {worst[0]} t{worst[1]} with {hist_len} history tokens)")
+    if card_bytes:
+        msg += f"; card {card_bytes / GB:.1f} GB"
+    print(msg, flush=True)
+    if card_bytes and peak > 0.95 * card_bytes:
+        print(f"WARNING: estimated peak {peak / GB:.1f} GB exceeds 95% of the card ({card_bytes / GB:.1f} GB). "
+              "Drop a uniform reference (--uniform-refs), use fewer ks, or a larger GPU.", flush=True)
+    return peak
 
 
 def _label(r):
@@ -155,6 +177,11 @@ def main():
                    help="fetch this many history tokens per KV head and layer per chunk during the tool-output "
                         "prefill (0 = plain prefill over the base history)")
     p.add_argument("--prefill-chunk", type=int, default=64)
+    p.add_argument("--uniform-refs", nargs="*", type=int, default=[2, 3],
+                   help="uniform precisions run as references besides the base (each costs one history copy; "
+                        "a missing one can be joined from another run with summarize_fetch --join)")
+    p.add_argument("--estimate-memory", action="store_true",
+                   help="only print the estimated peak GPU memory for these settings (no weights loaded) and exit")
     p.add_argument("--max-steps", type=int, default=64, help="target tokens decoded per pause")
     p.add_argument("--block", type=int, default=16)
     p.add_argument("--recent", type=int, default=64)
@@ -193,87 +220,116 @@ def main():
             samples_path.unlink(missing_ok=True)
 
     dev = args.device
+    pauses = {diag[0]: [diag[1]]} if diag else read_pauses(Path(args.samples_from))
+    rows_for = lambda: (diagnostic_rows(base_bits=args.base_bits, prefill=pf) if diag
+                        else default_rows(_ks(args.ks), base_bits=args.base_bits, prefill=pf,
+                                          uniform_refs=args.uniform_refs))
+    card = torch.cuda.get_device_properties(0).total_memory if torch.cuda.is_available() else 0
+
+    def load_samples(tok, fmt, max_ctx):
+        out = []
+        for instance_id, turns in pauses.items():
+            for s in data.make_samples(tok, data.load(instance_id), [], 10 ** 9, fmt=fmt, turns=turns):
+                total = len(s["hist_ids"]) + len(s["fresh_ids"]) + min(args.max_steps, len(s["target_ids"]))
+                if max_ctx and total > max_ctx:
+                    print(f"{instance_id} turn {s['turn']}: skipped, {total} tokens > {max_ctx}", flush=True)
+                    continue
+                out.append((instance_id, s))
+        return out[:args.max_samples] if args.max_samples else out
+
+    if args.estimate_memory:
+        from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
+        cfg = AutoConfig.from_pretrained(args.target)
+        with torch.device("meta"):
+            meta = AutoModelForCausalLM.from_config(cfg, dtype=torch.bfloat16)
+        weight_bytes = sum(t.numel() * t.element_size() for t in meta.parameters())
+        fmt = data.chat_format(cfg.model_type)
+        max_ctx = fmt.native_context if args.max_context is None else args.max_context
+        samples = load_samples(AutoTokenizer.from_pretrained(args.target), fmt, max_ctx)
+        memory_report(cfg, weight_bytes, rows_for(), samples, args, card)
+        return
+
     print(f"loading {args.target}", flush=True)
     tok, model = load_model(args.target, dev)
     if args.dtype == "float32":
         model = model.float()
     fmt = data.chat_format(model.config.model_type)
     max_ctx = fmt.native_context if args.max_context is None else args.max_context
-    rows = (diagnostic_rows(base_bits=args.base_bits, prefill=pf) if diag
-            else default_rows(_ks(args.ks), base_bits=args.base_bits, prefill=pf))
+    rows = rows_for()
     print(f"{len(rows)} rows on base {base}{f', prefill fetch k={args.prefill_fetch_k}' if pf else ''}: "
           f"{', '.join(sorted({r.name for r in rows}))}" + ("" if diag else f"; ks {args.ks}"), flush=True)
+    samples = load_samples(tok, fmt, max_ctx)
+    weight_bytes = sum(t.numel() * t.element_size() for t in model.parameters())
+    memory_report(model.config, weight_bytes, rows, samples, args, card)
 
-    pauses = {diag[0]: [diag[1]]} if diag else read_pauses(Path(args.samples_from))
-    n_done = 0
-    for instance_id, turns in pauses.items():
-        for s in data.make_samples(tok, data.load(instance_id), [], 10 ** 9, fmt=fmt, turns=turns):
-            if args.max_samples and n_done >= args.max_samples:
-                return
-            if (instance_id, s["turn"]) in done:
-                continue
-            total = len(s["hist_ids"]) + len(s["fresh_ids"]) + min(args.max_steps, len(s["target_ids"]))
-            if max_ctx and total > max_ctx:
-                print(f"{instance_id} turn {s['turn']}: skipped, {total} tokens > {max_ctx}", flush=True)
-                continue
-            n_done += 1
-            ids = lambda x: torch.tensor([x], device=dev)
-            hist, fresh, tgt = ids(s["hist_ids"]), ids(s["fresh_ids"]), ids(s["target_ids"])
-            t0 = torch.cuda.Event(enable_timing=True) if dev.startswith("cuda") else None
-            t1 = torch.cuda.Event(enable_timing=True) if t0 else None
-            if t0:
-                t0.record()
-            res = run_pause(model, hist, fresh, tgt, rows, block=args.block, recent=args.recent,
-                            max_steps=args.max_steps, check=diag is None, diag=diag is not None,
-                            base_bits=args.base_bits, prefill_k=args.prefill_fetch_k, prefill_chunk=args.prefill_chunk)
-            secs = None
-            if t0:
-                t1.record()
-                torch.cuda.synchronize()
-                secs = t0.elapsed_time(t1) / 1e3
-            if diag:
-                write_diagnostics(out_dir / f"diag_{instance_id}_t{s['turn']}", tok, rows, s, res, base)
-                return
+    for instance_id, s in samples:
+        if (instance_id, s["turn"]) in done:
+            continue
+        est = estimate_peak_bytes(model.config, weight_bytes, len(s["hist_ids"]), len(s["fresh_ids"]), rows,
+                                  base_bits=args.base_bits, max_steps=args.max_steps)
+        if torch.cuda.is_available():
+            torch.cuda.reset_peak_memory_stats()
+        ids = lambda x: torch.tensor([x], device=dev)
+        hist, fresh, tgt = ids(s["hist_ids"]), ids(s["fresh_ids"]), ids(s["target_ids"])
+        t0 = torch.cuda.Event(enable_timing=True) if dev.startswith("cuda") else None
+        t1 = torch.cuda.Event(enable_timing=True) if t0 else None
+        if t0:
+            t0.record()
+        res = run_pause(model, hist, fresh, tgt, rows, block=args.block, recent=args.recent,
+                        max_steps=args.max_steps, check=diag is None, diag=diag is not None,
+                        base_bits=args.base_bits, prefill_k=args.prefill_fetch_k, prefill_chunk=args.prefill_chunk)
+        secs = None
+        if t0:
+            t1.record()
+            torch.cuda.synchronize()
+            secs = t0.elapsed_time(t1) / 1e3
+        if diag:
+            write_diagnostics(out_dir / f"diag_{instance_id}_t{s['turn']}", tok, rows, s, res, base)
+            return
 
-            names = [r.name for r in rows]
-            ref = names.index("bf16")
-            ref_nll = float(-res["logp"][ref].mean())
-            out = []
-            for i, r in enumerate(rows):
-                if r.shadow:
-                    continue
-                out.append({"instance_id": instance_id, "turn": s["turn"], "hist_len": res["P"],
-                            "fresh_len": res["F"], "steps": res["T"], "scheme": r.name, "policy": r.policy,
-                            "per_layer": int(r.per_layer), "base_bits": args.base_bits,
-                            "prefill_fetch_k": args.prefill_fetch_k, "tool_prefill": r.fresh,
-                            "delta_nll": float(-res["logp"][i].mean()) - ref_nll,
-                            "top1_agree": float((res["pred"][i] == res["pred"][ref]).float().mean()),
-                            **res["rows"][i], **{b: res[b] for b in ("bf16_bytes", "base_bytes", "int1_bytes",
-                                                                       "int2_bytes", "int3_bytes")}})
-            _append(metrics_path, out)
-            chk = {k: v for k, v in res.items() if k.startswith("check_")}
-            nll_diff = max(abs(chk[f"check_{n}_nll_perstep"] - chk[f"check_{n}_nll_batched"])
-                           for n in ("bf16", "base"))
-            chk["check_max_nll_diff"] = nll_diff
-            _append(samples_path, [{"instance_id": instance_id, "turn": s["turn"], "hist_len": res["P"],
-                                    "fresh_len": res["F"], "steps": res["T"], "ref_nll": ref_nll,
-                                    "seconds": secs, "model": args.target, "base_bits": args.base_bits,
-                                    "prefill_fetch_k": args.prefill_fetch_k, "k_match": res["k_match"], **chk}])
-            by = {o["scheme"] + (f"@{o['k_label']}" if o["k_label"] != "0" else ""): o["delta_nll"] for o in out}
-            print(f"{instance_id} turn {s['turn']}: hist {res['P']}, {res['T']} steps"
-                  + (f", {secs:.1f} s" if secs else "")
-                  + " | " + " ".join(f"{n} {by[n]:+.4f}" for n in ("int1", "int2", "int3", "fetch_all") if n in by)
-                  + " | " + " ".join(f"{n} {by[n]:+.4f}" for n in
-                                     [f"{p_}@{k_}" for k_ in ("64", "match")
-                                      for p_ in ("s1", "s2", "spec", "s2sens_b", "oracle")] if n in by)
-                  + f" | k_match {res['k_match']} | check NLL diff {nll_diff:.2e}, max|dlogp| bf16 "
-                  f"{chk.get('check_bf16_max_abs_logp', float('nan')):.2e} {base} "
-                  f"{chk.get('check_base_max_abs_logp', float('nan')):.2e}", flush=True)
-            if args.check_nll_tol and nll_diff > args.check_nll_tol:
-                raise SystemExit(f"per-step vs sdpa NLL check failed: {nll_diff:.3e} > {args.check_nll_tol}")
-            del hist, fresh, tgt, res
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
+        names = [r.name for r in rows]
+        ref = names.index("bf16")
+        ref_nll = float(-res["logp"][ref].mean())
+        out = []
+        for i, r in enumerate(rows):
+            if r.shadow:
+                continue
+            out.append({"instance_id": instance_id, "turn": s["turn"], "hist_len": res["P"],
+                        "fresh_len": res["F"], "steps": res["T"], "scheme": r.name, "policy": r.policy,
+                        "per_layer": int(r.per_layer), "base_bits": args.base_bits,
+                        "prefill_fetch_k": args.prefill_fetch_k, "tool_prefill": r.fresh,
+                        "delta_nll": float(-res["logp"][i].mean()) - ref_nll,
+                        "top1_agree": float((res["pred"][i] == res["pred"][ref]).float().mean()),
+                        **res["rows"][i], **{b: res[b] for b in ("bf16_bytes", "base_bytes", "int1_bytes",
+                                                                   "int2_bytes", "int3_bytes")}})
+        _append(metrics_path, out)
+        chk = {k: v for k, v in res.items() if k.startswith("check_")}
+        nll_diff = max(abs(chk[f"check_{n}_nll_perstep"] - chk[f"check_{n}_nll_batched"])
+                       for n in ("bf16", "base"))
+        chk["check_max_nll_diff"] = nll_diff
+        _append(samples_path, [{"instance_id": instance_id, "turn": s["turn"], "hist_len": res["P"],
+                                "fresh_len": res["F"], "steps": res["T"], "ref_nll": ref_nll,
+                                "seconds": secs, "model": args.target, "base_bits": args.base_bits,
+                                "prefill_fetch_k": args.prefill_fetch_k, "k_match": res["k_match"],
+                                "est_peak_gb": est / GB,
+                                "peak_gpu_gb": (torch.cuda.max_memory_allocated() / GB
+                                                if torch.cuda.is_available() else float("nan")),
+                                "uniform_refs": " ".join(map(str, args.uniform_refs)), **chk}])
+        by = {o["scheme"] + (f"@{o['k_label']}" if o["k_label"] != "0" else ""): o["delta_nll"] for o in out}
+        print(f"{instance_id} turn {s['turn']}: hist {res['P']}, {res['T']} steps"
+              + (f", {secs:.1f} s" if secs else "")
+              + " | " + " ".join(f"{n} {by[n]:+.4f}" for n in ("int1", "int2", "int3", "fetch_all") if n in by)
+              + " | " + " ".join(f"{n} {by[n]:+.4f}" for n in
+                                 [f"{p_}@{k_}" for k_ in ("64", "match")
+                                  for p_ in ("s1", "s2", "spec", "s2sens_b", "oracle")] if n in by)
+              + f" | k_match {res['k_match']} | check NLL diff {nll_diff:.2e}, max|dlogp| bf16 "
+              f"{chk.get('check_bf16_max_abs_logp', float('nan')):.2e} {base} "
+              f"{chk.get('check_base_max_abs_logp', float('nan')):.2e}", flush=True)
+        if args.check_nll_tol and nll_diff > args.check_nll_tol:
+            raise SystemExit(f"per-step vs sdpa NLL check failed: {nll_diff:.3e} > {args.check_nll_tol}")
+        del hist, fresh, tgt, res
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
 
 if __name__ == "__main__":

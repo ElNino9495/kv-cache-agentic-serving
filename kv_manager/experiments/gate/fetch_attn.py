@@ -82,11 +82,13 @@ class Row:
 MATCH = -1  # k resolved per pause so that base + fetched set uses the memory of uniform int(base + 1)
 
 
-def default_rows(ks=(16, 32, 64, 128, MATCH), base_bits=2, prefill=False) -> list[Row]:
+def default_rows(ks=(16, 32, 64, 128, MATCH), base_bits=2, prefill=False, uniform_refs=(2, 3)) -> list[Row]:
+    """uniform_refs: uniform precisions run as references besides the base (each costs one history copy
+    on the GPU; a reference left out can be joined from another run with summarize_fetch --join)."""
     B = f"int{base_bits}"
     fr = "pf" if prefill else B
     rows = [Row("bf16", "bf16", "bf16"), Row(B, B, B)]
-    rows += [Row(f"int{b}", f"int{b}", f"int{b}") for b in (2, 3) if b != base_bits]
+    rows += [Row(f"int{b}", f"int{b}", f"int{b}") for b in uniform_refs if b != base_bits]
     rows += [Row("fetch_all", B, fr, policy="all"),
              # noise-floor control: equal to the bf16 row in exact arithmetic, computed through the fetch path,
              # so its dNLL is the bf16 rounding noise of the per-step path on that pause
@@ -433,6 +435,34 @@ def prefill_with_fetch(model, ids, hist_base, hist16, lo, hi, k, chunk, pos0):
         model.set_attn_implementation(prev_impl)
         _PCTX = None
     return [(torch.cat(a, dim=1), torch.cat(b, dim=1)) for a, b in zip(ctx.fk, ctx.fv)], ctx.pairs
+
+
+def estimate_peak_bytes(cfg, weight_bytes, P, F, rows, base_bits=2, max_steps=64, prefill_chunk=2048):
+    """Rough peak GPU memory of run_pause on one pause (history P tokens, tool output F tokens), in bytes.
+
+    History copies (one per precision used: bf16, base, uniform references) dominate. The peak is the larger of
+    the tool-output prefill phase (copies + one more copy while DynamicCache concatenates) and the decode phase
+    (copies + tool-output KV + per-layer scratch: fp32 casts of the copies, ~6 attention-probability tensors of
+    (rows, heads, P), previous-step scores, fetch bookkeeping). Adds 1.5 GB for the CUDA context / allocator.
+    """
+    L, kvh, H = cfg.num_hidden_layers, cfg.num_key_value_heads, cfg.num_attention_heads
+    d = getattr(cfg, "head_dim", None) or cfg.hidden_size // H
+    tok = 2 * kvh * d * 2 * L  # bf16 K + V of one token, all layers
+    base = f"int{base_bits}"
+    bases = ({r.hist for r in rows} | {r.fresh for r in rows} | {"bf16", base}) - {"pf"}
+    copies = len(bases) * P * tok
+    R = len(rows)
+    n_fresh = len({r.fresh for r in rows} | {base})
+    prefill_act = prefill_chunk * (cfg.hidden_size * 6 + getattr(cfg, "intermediate_size", 4 * cfg.hidden_size) * 3) * 2 \
+        + prefill_chunk * H * 64 * 4
+    prefill_phase = copies + P * tok + prefill_act
+    n_prev = sum(r.policy in PREV_POLICIES and not r.shadow for r in rows)
+    scratch = (len(bases) * 2 * kvh * P * d * 4            # fp32 casts of the history copies (one layer)
+               + 6 * R * H * (P + F + max_steps) * 4)      # logits / probabilities (one layer)
+    keep = n_prev * kvh * P * 4 * L + R * kvh * P * L    # previous-step scores, union masks (all layers)
+    gen = R * L * kvh * (max_steps + 1) * d * 2 * 2
+    decode_phase = copies + n_fresh * F * tok + scratch + keep + gen
+    return int(weight_bytes + max(prefill_phase, decode_phase) + 1.5e9)
 
 
 def hist_bytes(bits, P, lo, hi, block, kvh, d, n_layers):

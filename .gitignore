@@ -13,3 +13,4 @@ __pycache__/
 /kv_manager/data/
 .DS_Store
 /kv_manager/.gate-venv/
+/kv_manager/results/gate_fetch/.status-*

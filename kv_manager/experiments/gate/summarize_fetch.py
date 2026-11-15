@@ -16,6 +16,10 @@
 
 Works on older runs too (base int2, no "match" rows, check_int2_* columns).
 
+--join DIR takes uniform rows a run left out (default int3; e.g. the base-1 run skips the int3 history copy to
+fit a 40 GB GPU) from another run on the same pauses (e.g. the base-2 run). Each joined row keeps its dNLL
+against its own run's bf16 row; the summary reports how far the two runs' bf16 reference NLLs differ.
+
     python -m experiments.gate.summarize_fetch --dir results/gate_fetch/llama-3.1-8b-instruct-base2
 """
 
@@ -51,9 +55,34 @@ def _order(lab: str):
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--dir", default=str(ROOT / "results" / "gate_fetch" / "llama-3.1-8b-instruct"))
+    p.add_argument("--join", default=None, help="another run on the same pauses to take missing uniform rows from")
+    p.add_argument("--join-rows", nargs="*", default=["int3"])
     args = p.parse_args()
-    d = Path(args.dir)
+    print(summarize(Path(args.dir), Path(args.join) if args.join else None, args.join_rows))
+
+
+def summarize(d: Path, join: Path | None = None, join_rows=("int3",)) -> str:
+    """Write <d>/summary.md and return its text."""
     m, s = pd.read_csv(d / "metrics.csv"), pd.read_csv(d / "samples.csv")
+    joined = []
+    if join is not None:
+        jm, js = pd.read_csv(join / "metrics.csv"), pd.read_csv(join / "samples.csv")
+        pauses = set(map(tuple, s[KEY].to_numpy().tolist()))
+        for name in join_rows:
+            if name in set(m.scheme):
+                continue
+            shared = np.array([tuple(x) in pauses for x in jm[KEY].to_numpy().tolist()])
+            add = jm[(jm.scheme == name).to_numpy() & shared].copy()
+            if not len(add):
+                continue
+            if "k_label" in m and "k_label" not in add:
+                add["k_label"] = "0"
+            if "base_bits" in m:
+                add["base_bits"] = m.base_bits.iloc[0]
+            m = pd.concat([m, add[[c for c in add.columns if c in m.columns]]], ignore_index=True)
+            joined.append((name, len(add)))
+        both = s.set_index(KEY).ref_nll.to_frame("a").join(js.set_index(KEY).ref_nll.to_frame("b"), how="inner")
+        ref_gap = (both.a - both.b).abs()
     bits = int(m.base_bits.iloc[0]) if "base_bits" in m else 2
     base, nxt = f"int{bits}", f"int{bits + 1}"
     if "k_label" not in m:
@@ -97,6 +126,13 @@ def main():
     if "k_match" in s:
         lines.append(f"- k = match: {s.k_match.mean():,.0f} tokens per KV head and layer on average "
                      f"(min {s.k_match.min():,}, max {s.k_match.max():,}), i.e. {base} + fetched set = {nxt}'s memory")
+    for name, n_join in joined:
+        lines.append(f"- {name} joined from {join.name} ({n_join}/{len(s)} pauses; its dNLL is against that run's own "
+                     f"bf16 row; the two runs' bf16 reference NLL differs by mean {ref_gap.mean():.4f}, "
+                     f"max {ref_gap.max():.4f} per pause, i.e. bf16 rounding with a different batch)")
+    if "peak_gpu_gb" in s and s.peak_gpu_gb.notna().any():
+        lines.append(f"- GPU memory: measured peak {s.peak_gpu_gb.max():.1f} GB (allocated by PyTorch), estimated "
+                     f"{s.est_peak_gb.max():.1f} GB")
     lines.append("")
 
     noise, thr = None, None
@@ -211,9 +247,9 @@ def main():
     lines.append("")
 
     out = d / "summary.md"
-    out.write_text("\n".join(lines) + "\n")
-    print("\n".join(lines))
-    print(f"wrote {out}")
+    text = "\n".join(lines) + "\n"
+    out.write_text(text)
+    return text + f"wrote {out}"
 
 
 if __name__ == "__main__":
