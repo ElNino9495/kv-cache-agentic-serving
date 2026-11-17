@@ -3,12 +3,13 @@
 ```mermaid
 flowchart LR
     P0[Phase 0<br/>baseline profiling<br/>done] --> P1[Phase 1<br/>real traces +<br/>scoring proof of concept<br/>done]
-    P1 --> G{Phase 2<br/>gate experiment<br/>built, not run}
+    P1 --> G{Phase 2<br/>gate experiment<br/>run: NO-GO}
     P1 --> M1[M1<br/>vLLM connector,<br/>uniform precision<br/>built, CPU-tested]
-    G -- GO --> M2[M2<br/>draft inside vLLM,<br/>load-then-upgrade]
-    G -- NO-GO --> F[Fallback: uniform<br/>low-bit reload from M1]
-    M1 --> M2
-    M2 --> M3[M3<br/>evaluation]
+    G -. GO, not taken .-> M2[M2<br/>draft inside vLLM<br/>skipped]
+    G -- NO-GO --> U[Phase 2b<br/>uniform-only gate<br/>done: int3 ~lossless]
+    U --> FS[Phase 3<br/>per-step fetch study<br/>run 1 done, run 2 pending]
+    M1 --> F[Fallback: uniform<br/>low-bit reload]
+    FS --> M3[M3<br/>evaluation]
     F --> M3
 ```
 
@@ -96,9 +97,79 @@ output on top, and measures the damage to the real next agent message against th
 decision rule is fixed in code before any run. Full protocol:
 [Benchmarks](05-benchmarks.md#benchmark-1-gate-experiment-offline).
 
-**Status:** built and dry-run on CPU with tiny random models. Not run on a GPU yet; it needs one
-A100 for roughly 30–60 minutes (our estimate).
+**Status: run, NO-GO.** One A40 48 GB, 31 pauses, about 40 minutes.
+
+| Result | Number |
+|---|---|
+| Uniform int4 (block 16) | ΔNLL **+0.0009** at 0.325 of the bf16 bytes, top-1 agreement 0.991 |
+| Uniform int2 (block 16) | ΔNLL +0.0332 at 0.200 |
+| Best draft-guided configuration | fails both parts of the rule; part (a) by ~10×, part (b) narrowly (top 40% at int4: 0.250 bytes vs. the 0.244 limit, CI upper bound +0.011 vs. +0.01) |
+| Oracle (target's own attention) | never beats uniform int4 (every paired CI above 0) |
+| Consensus vs. SpecPrefill scoring | statistically tied (every paired CI includes 0); both beat recency and random |
+| Draft scoring latency (A40, HF eager, median) | draft_window 81 ms, SpecPrefill 246 ms, consensus 701 ms |
+
+**What it changed:** uniform 4-bit is almost lossless for the 8B target, and any scheme that puts most
+blocks at int2 pays more than int4 costs everywhere. The limit is the 2-bit floor, not the scorer.
+M2 (the draft inside vLLM) is skipped.
+
 **Code:** [`kv_manager/experiments/gate/`](../kv_manager/experiments/gate/).
+**Results:** [`kv_manager/results/gate/`](../kv_manager/results/gate/) (REPORT.md, summary.md).
+
+---
+
+## Phase 2b: uniform-only gate
+
+**Question:** how much does uniform low-bit reload cost, including 3-bit, and does it depend on the model?
+
+**What it does:** `run_gate.py --uniform-only` runs uniform int4, int3 and int2 plus a bf16 control (no draft)
+on the same 31 pauses, for Llama-3.1-8B, Llama-3.2-3B and Qwen3-8B. int3 uses the same quantization
+arithmetic without bit packing. Qwen3 drops 4 pauses that exceed its 32,768-token context.
+
+| Model (block 16) | int4 | int3 | int2 |
+|---|---|---|---|
+| Llama-3.1-8B | +0.0009 (0.325) | **−0.0001 (0.262)** | +0.0332 (0.200) |
+| Llama-3.2-3B | +0.0006 | +0.0055 | +0.0347 |
+| Qwen3-8B (27 pauses) | −0.0061 | −0.0036 | −0.0134 |
+
+**Findings:** uniform int3 is effectively lossless on Llama-8B, and at about the same bytes it beats the
+gate's consensus and SpecPrefill rows (for example −0.013 nats against consensus with the top 5% at bf16).
+Qwen3's negative ΔNLLs under added noise are suspicious: the recorded agent messages (written by another
+model) are probably unusual text for Qwen, so its numbers are not comparable with Llama's yet.
+
+**Results:** [`kv_manager/results/gate_uniform/`](../kv_manager/results/gate_uniform/).
+
+---
+
+## Phase 3: per-step fetch study
+
+**Question:** instead of choosing precision once at reload, can a 2-bit (or 1-bit) history plus a small set of
+bf16 tokens fetched at every decoding step (as in SpeCache) beat uniform low-bit reload?
+
+**What it does:** `run_fetch.py` reloads the history at the base precision (block 0, the last 64 tokens and the
+partial tail block in bf16), prefills the tool output over it, then teacher-forces the first ≤64 tokens of the
+real next message one at a time. At every step and layer each scheme swaps its own top-k history tokens per
+KV head to bf16 for that step only. All schemes run as one batch on the same pause; a noise-floor control
+(identical to bf16 in exact arithmetic) measures bf16 rounding.
+
+**Run 1 (int2 base, A40, 31 pauses, 22 minutes):**
+
+| Result | Number |
+|---|---|
+| Uniform int3 | ΔNLL −0.0004; no fetch configuration beats it (every CI against int3 above 0) |
+| Best fetch scheme: current-step int2 attention (s2), k=128 | +0.0080; oracle k=128 +0.0102 |
+| Fetch every quantized token every step (ceiling) | +0.0059: the tool output prefilled over int2 already costs this much |
+| Previous-step selection (s1 and its sensitivity variants) | barely helps; worse than plain int2 by more than noise on 10–12 pauses |
+| Noise floor | s.d. 0.0045 per pause: per-pause differences under ~0.009 are rounding |
+
+Brute-force unit tests show the previous-step result is not a bug in the fetch arithmetic.
+
+**Run 2 (built, CPU-tested, not run yet):** adds SpeCache's speculative token, sensitivity scores on the current
+query, a 1-bit base (SpeCache's modified quantizer) with a comparison at equal GPU-resident memory (int1 +
+fetched tokens vs. uniform int2), fetching during the tool-output prefill, and per-step diagnostics for the
+pause where previous-step selection fails. Run instructions: [RUNBOOK_fetch_study.md](RUNBOOK_fetch_study.md).
+
+**Code:** [`kv_manager/experiments/gate/`](../kv_manager/experiments/gate/) (`fetch_attn.py`, `run_fetch.py`,
+`summarize_fetch.py`). **Results:** [`kv_manager/results/gate_fetch/`](../kv_manager/results/gate_fetch/).
 
 ---
 
@@ -106,7 +177,7 @@ A100 for roughly 30–60 minutes (our estimate).
 
 **Goal:** a working offload-and-reload system inside vLLM 0.27.1, with uniform precision modes
 (`bf16`, `uniform_int4`, `uniform_int2`) and the benchmark harness. It is useful on its own and is
-the fallback if the gate says no.
+the fallback now that the gate said no.
 
 **Built:**
 - `AgentKVConnector`, a vLLM KV connector plugin: save at request end, asynchronous
@@ -125,7 +196,7 @@ Details are in [Architecture](06-architecture.md).
 
 ---
 
-## M2: the draft inside vLLM (planned)
+## M2: the draft inside vLLM (skipped after the gate NO-GO)
 
 - Load the 1B draft inside vLLM's worker process, owned by the connector, with per-session draft
   KV on the GPU.
@@ -135,7 +206,9 @@ Details are in [Architecture](06-architecture.md).
 - Modes: `draft` (consensus), `specprefill`, `recency`, `random`.
 
 The design is fixed (see [Architecture](06-architecture.md#m2-the-draft-inside-the-connector)).
-It is built only if the gate says GO.
+It was to be built only if the gate said GO; the gate said NO-GO, so it is skipped. If the fetch study shows
+per-step fetching beats uniform reload at equal memory, the connector would need a per-step fetch path instead
+(M1 only reloads whole blocks once).
 
 ## M3: evaluation (planned)
 
