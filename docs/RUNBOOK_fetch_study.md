@@ -64,12 +64,16 @@ reload at equal memory. The result feeds directly into the final evaluation.
 
 ### 2. Get the code
 
-Clone the repository you were given (either copy; they hold the same code) and switch to the `fetch-study` branch:
+Clone the repository you were given (either copy; they hold the same code), then switch to the `fetch-study`
+branch. **Do not use `main`**: in at least one copy it is out of date and does not contain this experiment.
 
 ```bash
 git clone <repository URL>
-cd <repository>/kv_manager
+cd <repository>
 git checkout fetch-study
+git branch --show-current            # must print: fetch-study
+ls kv_manager/experiments/gate/local_fetch.sh   # must exist; if not, you are on the wrong branch
+cd kv_manager
 ```
 
 All later commands run from this `kv_manager/` directory.
