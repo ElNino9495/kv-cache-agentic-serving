@@ -114,6 +114,7 @@ CUDA_VISIBLE_DEVICES=0 python -m experiments.gate.run_fetch --base-bits 1   # re
 CUDA_VISIBLE_DEVICES=0 python -m experiments.gate.run_fetch --diagnose      # per-step fetch logs, xarray t85
 python -m experiments.gate.summarize_fetch --dir results/gate_fetch/<model>-base1   # CIs, equal memory, bytes
 # Great Lakes: ACCOUNT=<your_account> bash experiments/gate/greatlakes_fetch.sbatch   (MODE, BASES, PREFILL_FETCH_K)
+# Any Linux + A100s: bash experiments/gate/local_fetch.sh   (detects GPUs; see docs/RUNBOOK_fetch_study.md)
 # CloudLab:    bash experiments/gate/cloudlab_fetch.sh   (base 2 and base 1 in parallel on GPUs 0 and 1, one tmux
 #              window each; base 1 skips the int3 copy to fit 40 GB and its summary joins int3 from base 2
 #              via summarize_fetch --join; startup estimates peak GPU memory per run and warns)

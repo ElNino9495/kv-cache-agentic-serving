@@ -251,12 +251,16 @@ launch() {
 case "${1:-all}" in
   setup) setup; check_memory ;;
   check-memory) check_memory ;;
-  run-base)  # internal: run-base <b> [finish]
-    run_base "$2"
-    [ "${3:-}" = finish ] && finish
+  run-base)  # internal: run-base <b> [finish]; a failed base still reaches finish (own process, own errexit)
+    if [ "${3:-}" = finish ]; then
+      bash "$SCRIPT" run-base "$2" || true
+      finish
+    else
+      run_base "$2"
+    fi
     ;;
-  run)  # internal: all bases back to back
-    for b in $BASES; do run_base "$b"; done
+  run)  # internal: all bases back to back; one failing does not stop the others
+    for b in $BASES; do bash "$SCRIPT" run-base "$b" || true; done
     finish
     ;;
   all) setup; check_memory; launch ;;

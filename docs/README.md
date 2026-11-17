@@ -19,6 +19,7 @@ If you are new here, read the pages in this order:
 | 6 | [Architecture](06-architecture.md) | How the system plugs into vLLM, data formats and correctness rules |
 | 7 | [Related work](07-related-work.md) | How this differs from H2O, SnapKV, KIVI, SpecKV, SpecPrefill, TriForce, Continuum and others |
 | – | [Glossary](glossary.md) | Every term and abbreviation used in these docs |
+| – | [Runbook: fetch study](RUNBOOK_fetch_study.md) | What happened since the gate NO-GO, and how to run the next fetch-study experiment on your own A100s |
 
 ## Status at a glance
 
@@ -48,6 +49,7 @@ Details are in [Phases](04-phases.md).
 
 - **Want the idea in five minutes?** Read [The problem](01-problem.md) and the first two sections of [The idea](02-idea.md).
 - **Running experiments?** Read [Benchmarks](05-benchmarks.md), then follow [`kv_manager/README.md`](../kv_manager/README.md).
+  To run the fetch study on your own GPUs, follow the [runbook](RUNBOOK_fetch_study.md).
 - **Changing the code?** Read [Architecture](06-architecture.md). Run the CPU tests with
   `cd kv_manager && python -m pytest tests -q`.
 - **Writing the paper?** Read [Goals](03-goals.md), [Phases](04-phases.md) and [Related work](07-related-work.md).
