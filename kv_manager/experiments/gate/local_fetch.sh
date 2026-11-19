@@ -8,11 +8,16 @@
 #   RESUME=1 bash experiments/gate/local_fetch.sh                  # continue after an interruption
 #   tmux attach -t fetch                                           # watch (Ctrl-b n: next window, Ctrl-b d: detach)
 #
-# At startup it reads GPU count and memory with nvidia-smi:
-#   - 2+ GPUs: base int2 on GPU 0 and base int1 on GPU 1 in parallel, one tmux window each;
-#   - 1 GPU:   base int2, then base int1, in one tmux window;
-#   - cards under 48 GB (A100 40 GB): the base-1 run skips the int3 history copy and its summary takes int3 from
-#     the base-2 run (same pauses); on 80 GB cards base 1 keeps int3.
+# GPU selection (shared servers): GPUS=1,2 or CUDA_VISIBLE_DEVICES=1,2 limits the run to those cards (GPUS wins
+# if both are set; default: every GPU nvidia-smi sees). Only the first two listed are used, and only they are
+# queried (nvidia-smi --id). Indices follow nvidia-smi's numbering (CUDA_DEVICE_ORDER=PCI_BUS_ID is set).
+#   CUDA_VISIBLE_DEVICES=1,2 bash experiments/gate/local_fetch.sh
+# It refuses to start if a chosen card already has more than MAX_USED_MIB (default 1024 MiB) in use, both before
+# setup and again right before launching.
+#   - 2 GPUs: base int2 on the first and base int1 on the second in parallel, one tmux window each;
+#   - 1 GPU:  base int2, then base int1, in one tmux window;
+#   - cards under ~44 GiB (A100 40 GB): the base-1 run skips the int3 history copy and its summary takes int3 from
+#     the base-2 run (same pauses); 48 GB (RTX A6000, A40) and 80 GB cards keep int3.
 # Each base: one-pause smoke check, the full run (31 pauses), its summary, the per-step diagnostic of one pause.
 # At the end everything is packed into ONE file: results/fetch_study_results_<RUN_ID>.tgz (the file to send back).
 #
@@ -20,7 +25,9 @@
 #   DATA_DIR  where the venv, pip cache and model go (default ~/kvfetch; needs ~100 GB free)
 #   HF_HOME   Hugging Face cache (default $DATA_DIR/hf)
 #   PYTHON    Python 3.12 interpreter used to create the venv (default python3.12)
-#   GPUS      GPU indices to use (default: all visible, first two are used)
+#   GPUS      GPU indices or UUIDs to use, comma or space separated (default: CUDA_VISIBLE_DEVICES, else all;
+#             the first two are used)
+#   MAX_USED_MIB  refuse to start on a chosen card with more memory than this already in use (default 1024)
 #   SESSION   tmux session name (default fetch)
 set -Eeuo pipefail
 
@@ -36,6 +43,9 @@ TORCH_VERSION="${TORCH_VERSION:-2.14.1}"
 TORCH_INDEX="${TORCH_INDEX:-https://download.pytorch.org/whl/cu126}"
 EXTRA_ARGS="${EXTRA_ARGS:-}"
 RUN_ID="${RUN_ID:-$(date +%Y%m%d-%H%M%S)}"
+MAX_USED_MIB="${MAX_USED_MIB:-1024}"
+export CUDA_DEVICE_ORDER="${CUDA_DEVICE_ORDER:-PCI_BUS_ID}"   # CUDA numbers GPUs like nvidia-smi does
+USE_GPUS=""
 
 KV_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SCRIPT="$KV_DIR/experiments/gate/local_fetch.sh"
@@ -46,27 +56,62 @@ SLUG="$(basename "$TARGET" | tr '[:upper:]' '[:lower:]')"
 LOGS="$KV_DIR/results/fetch_logs"
 MARK="$KV_DIR/results/gate_fetch/.status-$RUN_ID"
 
-gpu_info() {  # "index memory_MiB" per visible GPU
-  nvidia-smi --query-gpu=index,memory.total --format=csv,noheader,nounits | tr -d ' ' | tr ',' ' '
+gpu_field() {  # gpu_field <id> <field>: one nvidia-smi query field of one card (index or UUID)
+  nvidia-smi --id="$1" --query-gpu="$2" --format=csv,noheader,nounits | tr -d ' '
 }
 
-pick_gpus() {  # GPUs to use (first two of GPUS, or of all visible)
-  if [ -n "${GPUS:-}" ]; then echo "$GPUS"; else gpu_info | awk '{print $1}' | tr '\n' ' '; fi
+resolve_gpus() {  # sets USE_GPUS: the first two of GPUS, else of CUDA_VISIBLE_DEVICES, else of all cards
+  command -v nvidia-smi >/dev/null || { echo "!! nvidia-smi not found: this needs an NVIDIA GPU with drivers" >&2; exit 1; }
+  local l g ids=()
+  if [ -n "${GPUS:-}" ]; then
+    l="$GPUS"
+  elif [ -n "${CUDA_VISIBLE_DEVICES+x}" ]; then
+    [ -n "$CUDA_VISIBLE_DEVICES" ] || {
+      echo "!! CUDA_VISIBLE_DEVICES is set but empty (no GPU); unset it or name cards, e.g. CUDA_VISIBLE_DEVICES=1,2" >&2
+      exit 1; }
+    l="$CUDA_VISIBLE_DEVICES"
+  else
+    l="$(nvidia-smi --query-gpu=index --format=csv,noheader)"
+  fi
+  read -r -a ids <<< "$(printf '%s' "$l" | tr ',\n' '  ')"
+  [ "${#ids[@]}" -ge 1 ] || { echo "!! no GPU found" >&2; exit 1; }
+  USE_GPUS="${ids[*]:0:2}"
+  for g in $USE_GPUS; do
+    gpu_field "$g" index >/dev/null 2>&1 || { echo "!! nvidia-smi does not know GPU '$g' (check GPUS / CUDA_VISIBLE_DEVICES)" >&2; exit 1; }
+  done
 }
+
+gpu_csv() { echo "$USE_GPUS" | tr ' ' ','; }
+
+require_idle() {  # stop (or with "warn", only report) if a chosen card already has > MAX_USED_MIB in use
+  local g used busy=0
+  for g in $USE_GPUS; do
+    used=$(gpu_field "$g" memory.used)
+    if [ "$used" -gt "$MAX_USED_MIB" ]; then
+      echo "!! GPU $g already has $used MiB in use (limit $MAX_USED_MIB MiB): it looks busy." >&2; busy=1
+    fi
+  done
+  if [ "$busy" = 0 ]; then echo ">> GPU(s) $USE_GPUS idle (at most $MAX_USED_MIB MiB in use each)"; return 0; fi
+  [ "${1:-}" = warn ] && return 0
+  echo "   Find idle cards with nvidia-smi and choose them, e.g.: CUDA_VISIBLE_DEVICES=1,2 bash $SCRIPT" >&2
+  exit 1
+}
+
+pick_gpus() { echo "$USE_GPUS"; }
 
 min_mem_mib() {
   local g m min=""
-  for g in $(pick_gpus); do
-    m=$(gpu_info | awk -v g="$g" '$1 == g {print $2}')
-    [ -z "$min" ] || [ "$m" -lt "$min" ] && min=$m
+  for g in $USE_GPUS; do
+    m=$(gpu_field "$g" memory.total)
+    if [ -z "$min" ] || [ "$m" -lt "$min" ]; then min=$m; fi
   done
   echo "${min:-0}"
 }
 
-n_gpus() { wc -w <<< "$(pick_gpus)" | tr -d ' '; }
+n_gpus() { wc -w <<< "$USE_GPUS" | tr -d ' '; }
 
-refs_base1() {  # uniform references on base 1: drop the int3 copy on cards under 48 GB
-  if [ "$(min_mem_mib)" -lt 49152 ]; then echo "2"; else echo "2 3"; fi
+refs_base1() {  # uniform references on base 1: drop the int3 copy below ~44 GiB (A100 40 GB = 40960 MiB)
+  if [ "$(min_mem_mib)" -lt 45000 ]; then echo "2"; else echo "2 3"; fi
 }
 
 args_of() {  # run_fetch.py arguments for base $1, one per line
@@ -103,7 +148,8 @@ print('python', sys.version.split()[0], '| torch', torch.__version__, '| transfo
 check() {  # GPUs, plan and estimated peak memory per run (warns, never stops)
   cd "$KV_DIR"
   local b g i=0 a
-  echo ">> GPUs:"; nvidia-smi --query-gpu=index,name,memory.total,driver_version --format=csv
+  echo ">> GPUs used:"; nvidia-smi --id="$(gpu_csv)" --query-gpu=index,name,memory.used,memory.total,driver_version --format=csv
+  require_idle warn
   read -r -a gl <<< "$(pick_gpus)"
   if [ "$(n_gpus)" -ge 2 ]; then
     echo ">> plan: base int2 on GPU ${gl[0]} and base int1 on GPU ${gl[1]}, in parallel"
@@ -163,7 +209,7 @@ finish() {  # wait for both bases, redo the base-1 summary with int3 joined, pac
     [ -e "$MARK-base$b.failed" ] && echo "!! base int$b failed; its log is in results/fetch_logs/" >&2
   done
   summarize 1
-  { echo "run $RUN_ID, $(date)"; nvidia-smi; "$PY" -m pip freeze; } > "$LOGS/environment_$RUN_ID.txt" 2>&1 || true
+  { echo "run $RUN_ID, $(date), GPUs $USE_GPUS"; nvidia-smi --id="$(gpu_csv)"; "$PY" -m pip freeze; } > "$LOGS/environment_$RUN_ID.txt" 2>&1 || true
   local out="results/fetch_study_results_$RUN_ID.tgz" paths=()
   shopt -s nullglob
   paths=(results/gate_fetch/"$SLUG"-base* results/gate_fetch_smoke results/fetch_logs)
@@ -185,6 +231,7 @@ launch() {
   if tmux has-session -t "$SESSION" 2>/dev/null; then
     echo "!! tmux session '$SESSION' already exists; attach with: tmux attach -t $SESSION" >&2; exit 1
   fi
+  require_idle   # again: setup can take a while on a shared machine
   mkdir -p "$LOGS"
   read -r -a gl <<< "$(pick_gpus)"
   if [ "$(n_gpus)" -ge 2 ]; then
@@ -201,11 +248,11 @@ launch() {
 
 case "${1:-all}" in
   setup) setup ;;
-  check) check ;;
-  run-base) run_base "$2" ;;                                                         # internal
-  last) bash "$SCRIPT" run-base "$2" || true; finish ;;                             # internal: base, then pack
-  run) bash "$SCRIPT" run-base 2 || true; bash "$SCRIPT" run-base 1 || true; finish ;; # internal: one GPU
-  launch) launch ;;                                                       # internal
-  all) setup; check; launch ;;
+  check) resolve_gpus; check ;;
+  run-base) resolve_gpus; run_base "$2" ;;                                                         # internal
+  last) resolve_gpus; bash "$SCRIPT" run-base "$2" || true; finish ;;                             # internal: base, then pack
+  run) resolve_gpus; bash "$SCRIPT" run-base 2 || true; bash "$SCRIPT" run-base 1 || true; finish ;; # internal: one GPU
+  launch) resolve_gpus; launch ;;                                                       # internal
+  all) resolve_gpus; require_idle; setup; check; launch ;;
   *) echo "usage: $0 [all|setup|check]" >&2; exit 2 ;;
 esac

@@ -93,8 +93,11 @@ fp32 / 3B bf16 on one pause).
   (`--uniform-refs 2`) to fit, and its summary joins int3 from base 2 (`summarize_fetch --join`). Estimated
   peaks: 36.2 GB each (base 1 with int3 would be 41.3 GB). `run_fetch --estimate-memory` checks without
   loading weights; samples.csv records estimate and measured peak per pause.
-- Any Linux machine with A100s (40 or 80 GB, one or more): `local_fetch.sh` (no Slurm, no /mydata; detects GPU
-  count and memory, parallel on two GPUs, skips int3 on base 1 below 48 GB). Instructions for running it
+- Any Linux machine with A100s or RTX A6000s (40/48/80 GB, one or more): `local_fetch.sh` (no Slurm, no /mydata;
+  parallel on two GPUs, skips int3 on base 1 below ~44 GiB). For shared servers it honours
+  `CUDA_VISIBLE_DEVICES=1,2` (or `GPUS=1,2`, which wins), queries only those cards (`nvidia-smi --id`), sets
+  `CUDA_DEVICE_ORDER=PCI_BUS_ID`, and refuses to start on a card with > 1 GB in use (`MAX_USED_MIB`).
+  Expected next: a shared 8× RTX A6000 server. Instructions for running it
   without project background: `docs/RUNBOOK_fetch_study.md`.
 - Local Mac (16 GB RAM, no CUDA): CPU tests and small-model checks only; Llama-3.1-8B does not fit.
 

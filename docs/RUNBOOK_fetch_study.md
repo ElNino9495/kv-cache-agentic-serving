@@ -1,6 +1,7 @@
 # Runbook: per-step fetch study (run 2)
 
-For someone running the next experiment on their own Linux machine with NVIDIA A100s, who knows the project up
+For someone running the next experiment on their own Linux machine with NVIDIA A100s or RTX A6000s (a shared
+server is fine), who knows the project up
 to the gate's NO-GO. Part A explains what happened since; Part B is the step-by-step run.
 
 ---
@@ -56,7 +57,7 @@ reload at equal memory. The result feeds directly into the final evaluation.
 
 | Item | Needed |
 |---|---|
-| GPU | NVIDIA A100, 40 GB or 80 GB. One card works; two run twice as fast. |
+| GPU | NVIDIA A100 (40 or 80 GB) or RTX A6000 (48 GB), or another Ampere-or-newer card with 40 GB or more. One idle card works; two run twice as fast. On a shared server, choose idle cards (step 3). |
 | OS | Linux with the NVIDIA driver installed (`nvidia-smi` works). Driver 560 or newer is safest for the CUDA 12.6 PyTorch wheels. |
 | Disk | About 100 GB free for the data directory (model 16 GB, Python environment ~8 GB, caches). Results are small (a few MB). |
 | Python | 3.12, with `venv` (Ubuntu: `python3.12` and `python3.12-venv`; or `uv python install 3.12`). |
@@ -88,6 +89,21 @@ DATA_DIR=/path/with/100GB/free bash experiments/gate/local_fetch.sh
   defaults to `$DATA_DIR/hf`; set `HF_HOME` yourself to reuse an existing Hugging Face cache).
 - If Python 3.12 is not on the path as `python3.12`, add `PYTHON=/path/to/python3.12`.
 
+**On a shared server** (for example 8 × RTX A6000 where some cards are busy), first look at `nvidia-smi`, pick
+one or two cards that show almost no memory in use, and name them with `CUDA_VISIBLE_DEVICES`:
+
+```bash
+nvidia-smi                                        # find idle cards, e.g. 1 and 2
+CUDA_VISIBLE_DEVICES=1,2 DATA_DIR=/path/with/100GB/free bash experiments/gate/local_fetch.sh
+```
+
+- The script uses only the listed cards (the first two, if you list more) and queries only them. Numbers are
+  the ones `nvidia-smi` shows. `GPUS=1,2` does the same and takes priority over `CUDA_VISIBLE_DEVICES`.
+- It **refuses to start** if a chosen card already has more than 1 GB of memory in use, both at the beginning
+  and again after setup, just before the run starts. Pick other cards, or wait. (`MAX_USED_MIB=<MiB>` changes the
+  limit; leave it alone unless you are sure the memory in use is not another job.)
+- Without `CUDA_VISIBLE_DEVICES` or `GPUS` it uses GPUs 0 and 1, which on a shared server are often busy.
+
 What the script does:
 
 1. **Environment** (pinned): a venv in `$DATA_DIR/venv` with `torch==2.14.1` from the CUDA 12.6 wheel index and
@@ -97,10 +113,11 @@ What the script does:
    conversations (small, from GitHub).
 3. **Check**: prints your GPUs, the plan and an estimated peak memory per run, with a warning if it might not fit.
 4. **Run**, inside a tmux session called `fetch`:
-   - two or more GPUs: the 2-bit base on GPU 0 and the 1-bit base on GPU 1, in parallel (windows `base2`, `base1`);
+   - two GPUs: the 2-bit base on the first chosen card and the 1-bit base on the second, in parallel (windows
+     `base2`, `base1`);
    - one GPU: 2-bit base, then 1-bit base.
-   - On cards under 48 GB, the 1-bit run leaves out its 3-bit reference copy to fit, and borrows the 3-bit numbers
-     from the 2-bit run (same pauses). On 80 GB cards it keeps its own.
+   - On 40 GB cards, the 1-bit run leaves out its 3-bit reference copy to fit, and borrows the 3-bit numbers
+     from the 2-bit run (same pauses). On 48 GB (RTX A6000) and 80 GB cards it keeps its own.
    - Each base: a one-pause smoke check, the full run over 31 pauses, a summary, and the one-pause diagnostic.
 5. **Packs everything into one file** at the end (see step 7).
 
@@ -115,15 +132,17 @@ run will record the real ones.
 |---|---|---|
 | 1 × A100 (40 or 80 GB) | 15–30 min (downloads) | about 1–1.5 hours (bases one after the other) |
 | 2+ × A100 | 15–30 min | about 40–60 minutes (bases in parallel) |
+| 2 × RTX A6000 | 15–30 min | about 45–75 minutes (bases in parallel; similar speed to the A40 run 1 used) |
 
 Estimated peak GPU memory per run (largest pause, 34k tokens of history):
 
-| Run | 40 GB card | 80 GB card |
+| Run | 40 GB card | 48 GB or 80 GB card |
 |---|---|---|
 | 2-bit base | ~36 GB | ~36 GB |
 | 1-bit base | ~36 GB (3-bit reference left out) | ~41 GB (with 3-bit reference) |
 
-An A100 40 GB has about 42.5 GB usable, so 40 GB cards fit with a few GB to spare. Each pause's measured peak is
+An A100 40 GB has about 42.5 GB usable, so 40 GB cards fit with a few GB to spare; an RTX A6000 has about 48–51 GB
+(less with ECC on), so both runs fit with room left. This is also why a card someone else is using is refused. Each pause's measured peak is
 written to the results.
 
 ### 5. Checking that it is working
@@ -136,7 +155,8 @@ Attach with `tmux attach -t fetch` (switch windows with `Ctrl-b n`, detach with 
   The `check NLL diff` must be below 0.05 (expect around 0.01 or less); if it is not, the script stops on its own.
 - **Then:** one such line per pause, 31 per base. The file `results/gate_fetch/llama-3.1-8b-instruct-base2/samples.csv`
   (and `-base1`) gains one row per finished pause.
-- **`nvidia-smi`** in another terminal should show roughly 30–40 GB in use on each busy GPU.
+- **`nvidia-smi`** in another terminal should show roughly 30–40 GB in use on each card you chose, and no change
+  on the others.
 - **Finished:** the last window prints `DONE. Send back this one file: ...`.
 - **Problems:** a line starting with `!!`, a Python `Traceback`, or `CUDA out of memory` in the logs. On an
   out-of-memory error with 40 GB cards, rerun with `--resume` (step 6); if it repeats, send the log.
@@ -146,6 +166,9 @@ Attach with `tmux attach -t fetch` (switch windows with `Ctrl-b n`, detach with 
 ```bash
 RESUME=1 DATA_DIR=/same/path bash experiments/gate/local_fetch.sh
 ```
+
+On a shared server, add `CUDA_VISIBLE_DEVICES=...` again. Use the same cards if they are still free; other free
+cards of the same kind work too.
 
 Setup reruns quickly (everything is cached). Each base skips the pauses already in its `samples.csv` and continues;
 the summaries and diagnostics are redone; the final file is packed again. If a tmux session called `fetch` still
