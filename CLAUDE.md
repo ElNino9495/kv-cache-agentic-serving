@@ -98,23 +98,47 @@ fetch_idx.pt files (`cfd8bea`).
   0.015 per pause (batch composition changes fp32 summation order); A40 vs. A100 per-pause s.d. 0.018 (int2), so
   compare only within a run. Base-1 noise_ctrl mean +0.0038 (CI above 0), s.d. 0.0079 (2x base 2's).
 
-### Next run: fetch study run 3 (code ready, not run yet)
+### Per-step fetch study, run 3 (`kv_manager/results/gate_fetch/llama-3.1-8b-instruct-base{2,1}-pf128/`)
 
-Great Lakes, A40, `greatlakes_fetch.sbatch`: base 2 and base 1 as two separate jobs, both `--prefill-fetch-k 128`
-(fetch_all_noprefill is the same-run comparison). Base 1 skips its int3 copy and joins int3 from this run's base 2
-(run id checked). New rows: `spec` now guesses each step's input from the real previous target token (the spec row's
-greedy prediction at the previous step; a correct guess gives exactly s2's set); `spec_chain` keeps SpeCache's
-chained guess. Every guess is logged in `spec_guesses.csv`. CPU checks only so far.
+Great Lakes A40, run id `20261121-112651`, base 2 and base 1 as two jobs (~43 min each), both prefill fetch k=128,
+31/31 pauses, peak 38.7 GB (est. 37.1). Base 1 without int3; int3 joined from this run's base 2 (bf16 ref NLL equal).
+Logs in `gate_fetch/fetch_logs_run3/`. New rows: `spec` (guess of each step's input from the real previous target
+token; a correct guess gives exactly s2's set) and `spec_chain` (SpeCache's chained guess); guesses in `spec_guesses.csv`.
+- Base 2 (int2 + fetch vs. int3 −0.0015): ties int3. Best @match s2sens_a −0.0002 / s2sens_b −0.0001 (vs. int3
+  +0.0013/+0.0014, CIs include 0); s2 +0.0009, oracle +0.0002, fetch_all −0.0015 (= int3). Prefill fetch lifted
+  fetch_all from +0.0051 (noprefill) by −0.0066 [−0.0142, −0.0010].
+- Base 1 (int1 + fetch vs. int2 +0.0302): s2@match +0.0179, −0.0123 vs. int2 [−0.0296, +0.0047], median −0.0016,
+  17/31 wins (11 by > noise 0.0147, 9 losses); s2sens_b/oracle@match the same. Not significant. fetch_all +0.0165
+  (noprefill +0.0405): the int1 prefill still costs +0.018 vs. int3 even with prefill fetch 128.
+  Lead: s2sens_b@128 −0.0030 vs. int2 [−0.0196, +0.0146] at 0.147 resident vs. int2's 0.200 (74%), 136 MB unique
+  fetched per turn (1.2x int2's extra reload); fails the gate's "not worse" bound (+0.01) on the CI.
+- spec guesses right 82% (base 2) / 79-82% (base 1); spec_chain 36-40% / 21-35%. spec@match = s2 on base 2,
+  +0.011 worse on base 1 (median 0); at small k much worse than s2. Misses hit the tokens that matter (xarray t85:
+  input ' x' guessed "no"). Under teacher forcing the accuracy is Llama-greedy vs. Gemini-text agreement.
+- Cost: @match moves 5.9 GB/turn (42x the 139 MB one-time extra reload), ~620 MB unique; prefill fetch 84 MB/turn.
+- Noise: base-2 noise_ctrl s.d. 0.0039; base-1 noise_ctrl mean +0.0027 (CI above 0, as in run 2), s.d. 0.0073.
+
+### Next run: fetch study run 4 (code ready, not run yet)
+
+Great Lakes A40, `greatlakes_fetch.sbatch` default JOBS = three base-1 jobs, each its own run id and folder:
+`1:512` (prefill fetch 512, real targets; `-base1-pf512`), `1:128:self:0` and `1:128:self:0.7` (`-base1-pf128-self-T0`,
+`-self-T0.7`). Self targets (`run_fetch --target-source self --temperature T --seed 0`): the bf16 model writes ≤64
+tokens per pause (bf16 prefill of history + tool output; greedy at T=0, else sampled with a per-pause seed),
+saved in `self_targets.jsonl` before any row runs and reused on rerun/resume. All rows teacher-forced on them;
+spec guesses stay the compressed row's greedy prediction. Every row now records `kl_bf16` (KL from the bf16 row's
+next-token distribution, mean over steps); the summary reports it next to ΔNLL. No int3 join (no base-2 job).
+CPU checks only so far.
 
 ## GPU situation
 
 - Great Lakes (UMich, Slurm, partition spgpu): A40 48 GB (~47.5 GB usable). Ran the gate, the uniform-only gate and
-  the first fetch run; next: fetch run 3. All three `greatlakes*.sbatch` files take the Slurm account from
-  `ACCOUNT=<your_account>` and submit themselves; no account is hard-coded. `greatlakes_fetch.sbatch` submits one
-  job per base (`BASES`, default "2 1"; `PREFILL_FETCH_K` default 128; 3 h limit, expected ~60-75 min per job,
-  ~39 GB peak), prints a `RUN_ID`; resume one base with `RESUME=1 RUN_ID=<id> BASES=<b>`. The job that finishes
-  second writes base 1's summary with int3 joined from base 2 (both dirs' `run_id.txt` must match) and packs
-  `results/fetch_study_results_<RUN_ID>.tgz` (git-ignored).
+  the first fetch run and fetch run 3; next: fetch run 4. All three `greatlakes*.sbatch` files take the Slurm
+  account from `ACCOUNT=<your_account>` and submit themselves; no account is hard-coded. `greatlakes_fetch.sbatch` submits one
+  job per `JOBS` entry `BASE:PREFILL_K[:self:T]` (default run 4: "1:512 1:128:self:0 1:128:self:0.7"; run 3 was
+  "2:128 1:128"), each with its own run id `<stamp>-<job>` (e.g. `-b1-pf128-self-T0.7`) and folder; 3 h limit,
+  ~39 GB peak; run 3 took ~43 min per job. It prints each job's resume command (`RESUME=1 RUN_ID=<job's id>
+  JOBS="<entry>"`). A base-1 job joins int3 only from a base-2 job with the same prefill k and targets in the same
+  submission (run ids checked); each job packs `results/fetch_study_results_<run id>.tgz` (git-ignored).
 - CloudLab d8545 (Nov 2026): 4x A100 40 GB (~42.5 GB usable). `cloudlab_fetch.sh` (plain bash + tmux, venv and
   HF_HOME on /mydata) runs base 2 on GPU 0 and base 1 on GPU 1 in parallel; base 1 skips the int3 history copy
   (`--uniform-refs 2`) to fit, and its summary joins int3 from base 2 (`summarize_fetch --join`). Estimated
@@ -153,7 +177,8 @@ chained guess. Every guess is logged in `spec_guesses.csv`. CPU checks only so f
 | `gate/` | Phase 2 gate: REPORT.md, summary.md, metrics.csv, samples.csv (the pause list every later run reuses), pareto_B16/B64.png, run.log |
 | `gate_uniform/<model>/`, `gate_uniform/summary.md` | uniform-only gate per model (`llama-3.1-8b-instruct`, `llama-3.2-3b-instruct`, `qwen3-8b` with dropped.csv) |
 | `gate_fetch/llama-3.1-8b-instruct/` | first fetch run (int2 base, 29 rows) + `gate_fetch/kv-gate-fetch-66088085.log` |
-| `gate_fetch/<model>-base<b>[-pf<K>]/` | fetch runs 2+ (base 2 / base 1, optional prefill fetch): metrics.csv, samples.csv, summary.md, spec_guesses.csv (run 3+), run_id.txt (Great Lakes); `diag_<instance>_t<turn>/` inside for `--diagnose` (fetch_idx.pt is git-ignored) |
+| `gate_fetch/<model>-base<b>[-pf<K>][-self-T<T>]/` | fetch runs 2+ (base 2 / base 1, optional prefill fetch, optional self-written targets): metrics.csv (kl_bf16 from run 4), samples.csv, summary.md, spec_guesses.csv (run 3+), self_targets.jsonl (self targets), run_id.txt (Great Lakes); `diag_<instance>_t<turn>/` inside for `--diagnose` (fetch_idx.pt is git-ignored) |
+| `gate_fetch/llama-3.1-8b-instruct-base{2,1}-pf128/`, `fetch_logs_run3/` | fetch run 3 (A40, prefill fetch 128) and its Slurm logs |
 | `gate_fetch/llama-3.1-8b-instruct-base{2,1}/`, `fetch_logs/` | fetch run 2 (2x A100 80 GB, no prefill fetch) and its logs + environment report |
 | `gate_fetch_smoke/<name>/`, `gate_smoke/` | one-pause smoke checks |
 | `gate_fetch/.status-*` | CloudLab / local / Great Lakes completion markers (git-ignored) |
@@ -170,7 +195,8 @@ The fetch results were first committed under the repo-root `results/gate_fetch/`
 | Uniform-only gate (int4/int3/int2, 3 models) | Done |
 | Per-step fetch study v1 (int2 base) | Done: nothing beats uniform int3 |
 | Per-step fetch study run 2 (spec, base 1, equal memory, diagnostics; no prefill fetch) | Done (2x A100 80 GB): nothing beats uniform int(b+1) at equal memory |
-| Per-step fetch study run 3 (prefill fetch 128, anchored spec + spec_chain, guess log) | Built and CPU-tested; Great Lakes A40, two jobs |
+| Per-step fetch study run 3 (prefill fetch 128, anchored spec + spec_chain, guess log) | Done (A40): base 2 ties int3; base 1 beats int2 on the mean, not significantly |
+| Per-step fetch study run 4 (base 1: prefill fetch 512; self-written targets T=0 / 0.7; KL) | Built and CPU-tested; Great Lakes A40, three jobs |
 | M1: connector with uniform reload | Built, unit tests pass on CPU, never run on a GPU |
 | M2: draft scoring inside the connector | Skipped (gate NO-GO) |
 | M3: full replay benchmark + quality via forced decoding | Planned |
@@ -197,7 +223,7 @@ main); push `fetch-study` to both.
 
 ## Commands
 
-- Tests: `cd kv_manager && python -m pytest tests -q` (CPU, ~15 s; 75 tests, the connector import test
+- Tests: `cd kv_manager && python -m pytest tests -q` (CPU, ~15 s; 80 tests, the connector import test
   needs vLLM installed)
 - Environment: `bash kv_manager/envt/setup_env.sh` (Python 3.12, vLLM 0.27.1, pinned in
   `kv_manager/envt/requirements.lock.txt`). GPU runs of the gate/fetch study only need torch +

@@ -2,9 +2,10 @@
 
 > **Status (21 Nov 2026).** Run 2 is done: it ran on 2 × A100 80 GB with this runbook, and the results are
 > committed (`kv_manager/results/gate_fetch/llama-3.1-8b-instruct-base2/` and `-base1/`). Run 3 runs on the
-> project's Slurm cluster (`experiments/gate/greatlakes_fetch.sbatch`), not with this runbook. Part B still works
-> for repeating a run on another Linux machine. It now also runs run 3's corrected speculative-token rows, but
-> without prefill fetch.
+> project's Slurm cluster (`experiments/gate/greatlakes_fetch.sbatch`), not with this runbook; it is done
+> (`-base2-pf128/`, `-base1-pf128/`). Run 4 (base 1: prefill fetch 512, and self-written targets at temperature
+> 0 and 0.7) also runs there. Part B still works for repeating a run on another Linux machine. It now also runs
+> run 3's corrected speculative-token rows, but without prefill fetch or self-written targets.
 
 For someone running the next experiment on their own Linux machine with NVIDIA A100s or RTX A6000s (a shared
 server is fine), who knows the project up
@@ -62,6 +63,14 @@ token also guessed right on only a third of the steps or less.
 **Run 3 (next, on the Slurm cluster)** runs both bases with fetching during the tool output (128 tokens per chunk).
 It also fixes the speculative token: `spec` now guesses each step's token from the real previous token, and
 `spec_chain` keeps the paper's chained version for comparison. Every guess is logged in `spec_guesses.csv`.
+
+**Run 3 found** (A40s): with prefill fetch, 2-bit + fetch ties uniform 3-bit (best +0.0013 vs. int3, CI includes
+0), and 1-bit + fetch averages better than uniform 2-bit (s2 +0.0179 vs. +0.0302) but with a median near 0 and a
+CI that includes 0. "Fetch everything" on the 1-bit base is still +0.0165, so the tool-output prefill still costs.
+
+**Run 4 (Slurm cluster, base 1 only)** tests two explanations: a larger prefill fetch (512 tokens per chunk), and
+targets written by the model itself (greedy and temperature 0.7) instead of the agent's recorded messages, with
+the KL from the bf16 model reported next to ΔNLL.
 
 **Why it matters.** These runs decide how the project's final system reloads KV after a tool call: either plain
 uniform low-bit reload (already built), or a per-step fetch path, which is worth building only if it beats uniform

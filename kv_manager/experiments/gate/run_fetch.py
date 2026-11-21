@@ -39,8 +39,22 @@ tokens per KV head and layer (by the chunk's own queries over base keys) swapped
 The fetch rows and fetch_all start from that prefill; the uniform base row and fetch_all_noprefill keep the
 plain base prefill, so the lift of the prefill ceiling is measured in the same run.
 
-Outputs (in --out-dir, default results/gate_fetch/<model>-base<b>[-pf<K>]/): metrics.csv (pause x row),
-samples.csv, spec_guesses.csv (pause x spec row x step: guessed token, the token it stood for, match).
+--target-source self --temperature T replaces the real next message (written by the agent's own LLM) with the
+target model's own: for each pause the bf16 model (bf16 prefill of the history and the tool output) writes up to
+--max-steps tokens, greedy at T = 0, otherwise sampled at temperature T with a generator seeded per pause
+(--seed + CRC32 of "instance:turn", so a pause's target does not depend on which other pauses run). Generation
+stops after the end-of-turn token (kept, as in the real targets). The targets are saved to --self-targets
+(default <out-dir>/self_targets.jsonl: ids, text, temperature, seed, model) before any row runs and are reused by
+every later run or --resume into the same folder (a fresh run keeps that file; settings that differ from a saved
+target stop the run). All rows are then teacher-forced on that target as usual; spec and spec_chain still guess
+with the compressed row's greedy prediction, so their guess accuracy reflects the sampling.
+
+Every row also records kl_bf16: KL(bf16 row || row) of the next-token distribution, averaged over the steps
+(on self-written text dNLL depends on which tokens were sampled; the KL does not).
+
+Outputs (in --out-dir, default results/gate_fetch/<model>-base<b>[-pf<K>][-self-T<T>]/): metrics.csv (pause x
+row), samples.csv, spec_guesses.csv (pause x spec row x step: guessed token, the token it stood for, match),
+self_targets.jsonl (self targets only).
 
     cd kv_manager
     CUDA_VISIBLE_DEVICES=0 python -m experiments.gate.run_fetch --max-samples 1 --check-nll-tol 0.05  # smoke
@@ -52,12 +66,15 @@ samples.csv, spec_guesses.csv (pause x spec row x step: guessed token, the token
 
 import argparse
 import csv
+import json
+import zlib
 from pathlib import Path
 
 import torch
 
 from experiments.gate import data
-from experiments.gate.fetch_attn import MATCH, default_rows, diagnostic_rows, estimate_peak_bytes, run_pause
+from experiments.gate.fetch_attn import (MATCH, default_rows, diagnostic_rows, estimate_peak_bytes,
+                                        generate_self_target, run_pause)
 from experiments.gate.run_gate import ROOT, _append, load_model, model_slug, read_pauses
 
 DIAG_DEFAULT = "pydata__xarray-4687:85"
@@ -83,6 +100,58 @@ def memory_report(cfg, weight_bytes, rows, samples, args, card_bytes):
         print(f"WARNING: estimated peak {peak / GB:.1f} GB exceeds 95% of the card ({card_bytes / GB:.1f} GB). "
               "Drop a uniform reference (--uniform-refs), use fewer ks, or a larger GPU.", flush=True)
     return peak
+
+
+def pause_seed(seed: int, instance_id: str, turn: int) -> int:
+    return (int(seed) + zlib.crc32(f"{instance_id}:{turn}".encode())) % 2 ** 31
+
+
+def load_self_targets(path: Path) -> dict:
+    """{(instance_id, turn): record} from a self_targets.jsonl file (empty if it does not exist)."""
+    out = {}
+    if Path(path).exists():
+        with open(path) as f:
+            for line in f:
+                if line.strip():
+                    r = json.loads(line)
+                    out[(r["instance_id"], int(r["turn"]))] = r
+    return out
+
+
+def append_self_target(path: Path, rec: dict) -> None:
+    with open(path, "a") as f:
+        f.write(json.dumps(rec) + "\n")
+
+
+def self_target(model, tok, s, instance_id, store, path, *, target, temperature, seed, max_new, eos_ids, dev):
+    """The pause's saved self-written target, or generate, save and return it (list of token ids)."""
+    want = {"model": target, "temperature": float(temperature), "seed": pause_seed(seed, instance_id, s["turn"]),
+            "max_new": int(max_new)}
+    key = (instance_id, int(s["turn"]))
+    if key in store:
+        rec = store[key]
+        diff = {k: (rec.get(k), v) for k, v in want.items() if rec.get(k) != v}
+        if diff:
+            raise SystemExit(f"{path}: saved target for {instance_id} t{s['turn']} was made with other settings "
+                             f"(saved, requested): {diff}. Use another --out-dir or --self-targets.")
+        return list(rec["target_ids"])
+    ids = lambda x: torch.tensor([x], device=dev)
+    out = generate_self_target(model, ids(s["hist_ids"]), ids(s["fresh_ids"]), max_new, temperature,
+                               want["seed"], eos_ids)
+    rec = {"instance_id": instance_id, "turn": int(s["turn"]), **want, "n_tokens": len(out),
+           "ended": bool(out and out[-1] in set(eos_ids)), "target_ids": out, "text": tok.decode(out)}
+    append_self_target(path, rec)
+    store[key] = rec
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    return out
+
+
+def eos_ids_for(model, tok, fmt) -> list[int]:
+    ids = set(tok.encode(fmt.target_end, add_special_tokens=False))
+    e = getattr(model.generation_config, "eos_token_id", None)
+    ids |= set(e if isinstance(e, (list, tuple)) else [e] if e is not None else [])
+    return sorted(ids)
 
 
 def _label(r):
@@ -185,6 +254,12 @@ def main():
     p.add_argument("--estimate-memory", action="store_true",
                    help="only print the estimated peak GPU memory for these settings (no weights loaded) and exit")
     p.add_argument("--max-steps", type=int, default=64, help="target tokens decoded per pause")
+    p.add_argument("--target-source", default="real", choices=["real", "self"],
+                   help="real = the recorded next message; self = the bf16 target model's own (see above)")
+    p.add_argument("--temperature", type=float, default=0.0, help="self targets: 0 = greedy")
+    p.add_argument("--seed", type=int, default=0, help="self targets: base seed (per pause: + CRC32 of the pause)")
+    p.add_argument("--self-targets", default=None,
+                   help="self targets file (default <out-dir>/self_targets.jsonl; reused if it exists)")
     p.add_argument("--block", type=int, default=16)
     p.add_argument("--recent", type=int, default=64)
     p.add_argument("--max-samples", type=int, default=0)
@@ -201,14 +276,27 @@ def main():
     p.add_argument("--resume", action="store_true")
     args = p.parse_args()
 
-    run_name = model_slug(args.target) + f"-base{args.base_bits}" + (f"-pf{args.prefill_fetch_k}"
-                                                                      if args.prefill_fetch_k else "")
+    self_tgt = args.target_source == "self"
+    if args.temperature < 0 or (args.temperature and not self_tgt):
+        p.error("--temperature needs --target-source self and must be >= 0")
+    run_name = (model_slug(args.target) + f"-base{args.base_bits}"
+                + (f"-pf{args.prefill_fetch_k}" if args.prefill_fetch_k else "")
+                + (f"-self-T{args.temperature:g}" if self_tgt else ""))
     out_dir = Path(args.out_dir or ROOT / "results" / "gate_fetch" / run_name)
     base = f"int{args.base_bits}"
     pf = args.prefill_fetch_k > 0
     out_dir.mkdir(parents=True, exist_ok=True)
     metrics_path, samples_path = out_dir / "metrics.csv", out_dir / "samples.csv"
     guesses_path = out_dir / "spec_guesses.csv"
+    targets_path = Path(args.self_targets) if args.self_targets else out_dir / "self_targets.jsonl"
+    targets = load_self_targets(targets_path) if self_tgt else {}
+    # saved targets made with other settings stop the run here, before any earlier results are deleted
+    bad = [f"{i} t{t}" for (i, t), r in targets.items()
+           if (r.get("model"), r.get("temperature"), r.get("max_new"), r.get("seed"))
+           != (args.target, float(args.temperature), int(args.max_steps), pause_seed(args.seed, i, t))]
+    if bad:
+        raise SystemExit(f"{targets_path}: {len(bad)} saved target(s) were made with other settings (model, "
+                         f"temperature, seed or --max-steps), e.g. {bad[0]}. Use another --out-dir or --self-targets.")
     diag = None
     if args.diagnose:
         inst, turn = args.diagnose.rsplit(":", 1)
@@ -265,6 +353,21 @@ def main():
     samples = load_samples(tok, fmt, max_ctx)
     weight_bytes = sum(t.numel() * t.element_size() for t in model.parameters())
     memory_report(model.config, weight_bytes, rows, samples, args, card)
+    if self_tgt:
+        # every pause's target first (saved, so a rerun or --resume teacher-forces exactly the same tokens)
+        eos = eos_ids_for(model, tok, fmt)
+        n_new = sum((i, s["turn"]) not in targets for i, s in samples)
+        print(f"self targets: bf16 model, temperature {args.temperature:g}, seed {args.seed}, up to "
+              f"{args.max_steps} tokens, eos {eos}; {len(samples) - n_new} saved in {targets_path}, "
+              f"{n_new} to generate", flush=True)
+        for instance_id, s in samples:
+            s["real_target_len"] = len(s["target_ids"])
+            s["target_ids"] = self_target(model, tok, s, instance_id, targets, targets_path, target=args.target,
+                                          temperature=args.temperature, seed=args.seed, max_new=args.max_steps,
+                                          eos_ids=eos, dev=dev)
+        lens = [len(s["target_ids"]) for _, s in samples]
+        if lens:
+            print(f"self targets: {min(lens)}-{max(lens)} tokens (mean {sum(lens) / len(lens):.1f})", flush=True)
 
     for instance_id, s in samples:
         if (instance_id, s["turn"]) in done:
@@ -302,6 +405,7 @@ def main():
                         "fresh_len": res["F"], "steps": res["T"], "scheme": r.name, "policy": r.policy,
                         "per_layer": int(r.per_layer), "base_bits": args.base_bits,
                         "prefill_fetch_k": args.prefill_fetch_k, "tool_prefill": r.fresh,
+                        "target_source": args.target_source, "temperature": args.temperature,
                         "delta_nll": float(-res["logp"][i].mean()) - ref_nll,
                         "top1_agree": float((res["pred"][i] == res["pred"][ref]).float().mean()),
                         **res["rows"][i], **{b: res[b] for b in ("bf16_bytes", "base_bytes", "int1_bytes",
@@ -319,6 +423,8 @@ def main():
                                 "fresh_len": res["F"], "steps": res["T"], "ref_nll": ref_nll,
                                 "seconds": secs, "model": args.target, "base_bits": args.base_bits,
                                 "prefill_fetch_k": args.prefill_fetch_k, "k_match": res["k_match"],
+                                "target_source": args.target_source, "temperature": args.temperature,
+                                "seed": args.seed if self_tgt else "", "target_len": len(s["target_ids"]),
                                 "est_peak_gb": est / GB,
                                 "peak_gpu_gb": (torch.cuda.max_memory_allocated() / GB
                                                 if torch.cuda.is_available() else float("nan")),

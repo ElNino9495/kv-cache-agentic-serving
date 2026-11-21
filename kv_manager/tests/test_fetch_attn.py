@@ -149,3 +149,74 @@ def test_anchored_spec_equals_s2_when_every_guess_is_right(model, ids):
     assert all(x["match"] for x in spec) and res["rows"][0]["spec_guess_acc"] == 1.0
     assert torch.allclose(res["logp"][0], res["logp"][2], atol=1e-5)
     assert torch.equal(res["pred"][0], res["pred"][2])
+
+
+def _greedy_bruteforce(model, ids, n):
+    seq = ids.clone()
+    out = []
+    with torch.no_grad():
+        for _ in range(n):
+            t = int(model(input_ids=seq).logits[0, -1].argmax())
+            out.append(t)
+            seq = torch.cat([seq, torch.tensor([[t]])], dim=1)
+    return out
+
+
+def test_self_target_greedy_equals_model_greedy_and_bf16_row(model, ids):
+    from experiments.gate.fetch_attn import generate_self_target
+    hist_ids, fresh_ids, _ = ids
+    tgt = generate_self_target(model, hist_ids, fresh_ids, T, temperature=0.0)
+    assert len(tgt) == T
+    assert tgt == _greedy_bruteforce(model, torch.cat([hist_ids, fresh_ids], dim=1), T)
+    # teacher-forced on it, the uncompressed (bf16) row predicts exactly that target at every step
+    res = _run(model, (hist_ids, fresh_ids, torch.tensor([tgt])), [Row("bf16", "bf16", "bf16"), Row("int2")])
+    assert res["pred"][0].tolist() == tgt
+    # stops after (and keeps) the first end-of-turn token
+    cut = generate_self_target(model, hist_ids, fresh_ids, T, temperature=0.0, eos_ids=[tgt[3]])
+    assert cut == tgt[:tgt.index(tgt[3]) + 1]
+
+
+def test_self_target_sampling_is_seeded(model, ids):
+    from experiments.gate.fetch_attn import generate_self_target
+    hist_ids, fresh_ids, _ = ids
+    a = generate_self_target(model, hist_ids, fresh_ids, T, temperature=1.5, seed=7)
+    b = generate_self_target(model, hist_ids, fresh_ids, T, temperature=1.5, seed=7)
+    c = generate_self_target(model, hist_ids, fresh_ids, T, temperature=1.5, seed=8)
+    assert a == b and a != c
+
+
+class _Tok:
+    def decode(self, ids):
+        return " ".join(map(str, ids))
+
+
+def test_saved_self_targets_reload_identically(model, ids, tmp_path, monkeypatch):
+    from experiments.gate import run_fetch
+    hist_ids, fresh_ids, _ = ids
+    s = {"turn": 5, "hist_ids": hist_ids[0].tolist(), "fresh_ids": fresh_ids[0].tolist()}
+    path = tmp_path / "self_targets.jsonl"
+    kw = dict(target="tiny", temperature=0.7, seed=3, max_new=T, eos_ids=[], dev="cpu")
+    first = run_fetch.self_target(model, _Tok(), s, "inst", {}, path, **kw)
+    store = run_fetch.load_self_targets(path)
+    assert store[("inst", 5)]["target_ids"] == first and store[("inst", 5)]["text"] == _Tok().decode(first)
+
+    def boom(*a, **k):
+        raise AssertionError("a saved target must not be regenerated")
+    monkeypatch.setattr(run_fetch, "generate_self_target", boom)
+    again = run_fetch.self_target(model, _Tok(), s, "inst", store, path, **kw)
+    assert again == first
+    rows = [Row("bf16", "bf16", "bf16"), Row("int2"), Row("s2", policy="s2", k=8)]
+    r1 = _run(model, (hist_ids, fresh_ids, torch.tensor([first])), rows)
+    r2 = _run(model, (hist_ids, fresh_ids, torch.tensor([again])), rows)
+    assert torch.equal(r1["logp"], r2["logp"]) and torch.equal(r1["pred"], r2["pred"])
+    with pytest.raises(SystemExit):
+        run_fetch.self_target(model, _Tok(), s, "inst", store, path, **{**kw, "temperature": 0.0})
+
+
+def test_kl_vs_bf16_row(model, ids):
+    rows = [Row("bf16", "bf16", "bf16"), Row("noise_ctrl", hist="int2", fresh="bf16", policy="all"), Row("int2")]
+    res = _run(model, ids, rows)
+    kl = [r["kl_bf16"] for r in res["rows"]]
+    assert kl[0] == pytest.approx(0.0, abs=1e-7)
+    assert kl[1] == pytest.approx(0.0, abs=1e-5)
+    assert kl[2] > 1e-6 and kl[2] > 100 * abs(kl[1])

@@ -110,6 +110,10 @@ tokens that base + fetched set uses the GPU memory of uniform int(base+1), so th
 fetch with uniform int2 (and int2 + fetch with int3) at equal resident memory. `--prefill-fetch-k K` also
 fetches the top-K history tokens per chunk during the tool-output prefill, to lift the prefill ceiling
 (`fetch_all` vs `fetch_all_noprefill`).
+`--target-source self --temperature T` teacher-forces the bf16 target model's own next message instead of the
+recorded one (generated once per pause, greedy at T = 0, seeded per pause, saved in `self_targets.jsonl` and
+reused by reruns and `--resume`). Every row also records `kl_bf16`, the KL from the bf16 row's next-token
+distribution averaged over steps; the summary shows it next to ΔNLL.
 
 ```bash
 CUDA_VISIBLE_DEVICES=0 python -m experiments.gate.run_fetch                 # results/gate_fetch/<model>-base2/
@@ -117,9 +121,10 @@ CUDA_VISIBLE_DEVICES=0 python -m experiments.gate.run_fetch --base-bits 1   # re
 CUDA_VISIBLE_DEVICES=0 python -m experiments.gate.run_fetch --diagnose      # per-step fetch logs, xarray t85
 python -m experiments.gate.summarize_fetch --dir results/gate_fetch/<model>-base1   # CIs, equal memory, bytes
 # Great Lakes: ACCOUNT=<your_account> bash experiments/gate/greatlakes_fetch.sbatch
-#              one A40 job per base (BASES, default "2 1"), PREFILL_FETCH_K=128 by default, base 1 without int3;
-#              the job finishing second joins int3 from this run's base 2 (RUN_ID). Resume one base:
-#              ACCOUNT=<acct> RESUME=1 RUN_ID=<id> BASES=<b> bash experiments/gate/greatlakes_fetch.sbatch
+#              one A40 job per JOBS entry BASE:PREFILL_K[:self:T] (default, run 4: "1:512 1:128:self:0
+#              1:128:self:0.7"; run 3 was "2:128 1:128"), each with its own run id; base 1 without int3, joined
+#              from a base-2 job with the same prefill k and targets in the same submission, if any. The submit
+#              prints each job's resume command (RESUME=1 RUN_ID=<job's id> JOBS="<entry>").
 # Any Linux + A100s: bash experiments/gate/local_fetch.sh   (detects GPUs; see docs/RUNBOOK_fetch_study.md)
 # CloudLab:    bash experiments/gate/cloudlab_fetch.sh   (base 2 and base 1 in parallel on GPUs 0 and 1, one tmux
 #              window each; base 1 skips the int3 copy to fit 40 GB and its summary joins int3 from base 2

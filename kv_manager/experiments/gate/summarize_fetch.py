@@ -14,6 +14,10 @@
   - bytes: total bytes moved per turn by per-step fetching next to uniform int(base+1)'s one-time extra reload
     bytes over the base; GPU-resident history (base + k fetched tokens) next to resident int(base+1)
 
+Runs with --target-source self (the bf16 model's own message as the target) get a KL column: KL(bf16 row || row)
+of the next-token distribution averaged over steps, with paired CIs against the uniform references, since dNLL on
+self-written text depends on which tokens were sampled.
+
 Works on older runs too (base int2, no "match" rows, check_int2_* columns).
 
 --join DIR takes uniform rows a run left out (default int3; e.g. the base-1 run skips the int3 history copy to
@@ -41,7 +45,9 @@ MB = 2 ** 20
 
 def _ci(a: pd.Series, b: pd.Series) -> str:
     idx = a.index.intersection(b.index)
-    d = (a.loc[idx] - b.loc[idx]).to_numpy()
+    d = (a.loc[idx] - b.loc[idx]).dropna().to_numpy()
+    if not len(d):
+        return ""
     lo, up = paired_ci(d)
     return f"{d.mean():+.4f} [{lo:+.4f}, {up:+.4f}]"
 
@@ -95,11 +101,19 @@ def summarize(d: Path, join: Path | None = None, join_rows=("int3",)) -> str:
     ub, un = by[base].delta_nll, by[nxt].delta_nll
     ck = "base" if "check_base_nll_batched" in s else "int2"
     pf_k = int(m.prefill_fetch_k.iloc[0]) if "prefill_fetch_k" in m else 0
+    self_tgt = "target_source" in s and (s.target_source == "self").any()
+    temp = float(s.temperature.iloc[0]) if self_tgt else None
+    kl = "kl_bf16" in m and m.kl_bf16.notna().any()
 
-    lines = [f"# Per-step fetch study: {s.model.iloc[0]}, base {base}" + (f", prefill fetch k={pf_k}" if pf_k else ""),
+    lines = [f"# Per-step fetch study: {s.model.iloc[0]}, base {base}" + (f", prefill fetch k={pf_k}" if pf_k else "")
+             + (f", self-written targets (T={temp:g})" if self_tgt else ""),
              "",
              f"{len(s)} pauses, {s.steps.mean():.1f} teacher-forced steps per pause on average (cap 64). "
-             f"dNLL in nats per target token against the per-step bf16 row. Base: {base} history, block 16"
+             + (f"Targets: the bf16 model's own next message ({'greedy' if temp == 0 else f'sampled at temperature {temp:g}'}"
+                f", seed {s.seed.iloc[0]} + per-pause offset; bf16 prefill of history and tool output; "
+                f"{s.target_len.min()}-{s.target_len.max()} tokens, mean {s.target_len.mean():.1f}), saved in "
+                "self_targets.jsonl; every row is teacher-forced on them. " if self_tgt else "")
+             + f"dNLL in nats per target token against the per-step bf16 row. Base: {base} history, block 16"
              + (" (SpeCache's modified 1-bit quantizer)" if bits == 1 else "")
              + "; block 0, the recent 64 tokens and the trailing partial block are bf16. Tool output prefilled over "
              f"the {base} history " + (f"with a per-chunk top-{pf_k} fetch (fetch rows; the uniform {base} row and "
@@ -147,31 +161,38 @@ def summarize(d: Path, join: Path | None = None, join_rows=("int3",)) -> str:
                  f"arithmetic, so any dNLL is bf16 rounding in the per-step path): mean {nd.mean():+.4f} "
                  f"[95% CI {lo:+.4f}, {up:+.4f}], s.d. over pauses {nd.std(ddof=1):.4f}, "
                  f"mean |dNLL| {nd.abs().mean():.4f}, max |dNLL| {nd.abs().max():.4f}; "
-                 f"top-1 {nz.top1_agree.mean():.3f} (min {nz.top1_agree.min():.3f}). Per-pause scheme differences "
-                 f"smaller than about {thr:.4f} (2 s.d.) are within rounding noise.")
+                 f"top-1 {nz.top1_agree.mean():.3f} (min {nz.top1_agree.min():.3f})"
+                 + (f"; KL vs bf16 mean {nz.kl_bf16.mean():.4f} (max {nz.kl_bf16.max():.4f})" if kl else "")
+                 + f". Per-pause scheme differences smaller than about {thr:.4f} (2 s.d.) are within rounding noise.")
 
     cols = [base] + refs
     lines += ["## Quality", "",
               "Fetched = (layer, KV head, token) pairs fetched per step; distinct = distinct token positions per "
               "layer per step. Recall = share of each fetched set that is also in the oracle set of the same size, "
               "computed with the row's own current query. The last column compares each fetch scheme with s2 "
-              "(current-step attention over base keys) at the same k."]
+              "(current-step attention over base keys) at the same k."
+              + (" KL = KL(bf16 row || row) of the next-token distribution, nats, averaged over steps and pauses."
+                 if kl else "")]
     if noise:
         lines += ["", noise]
-    lines += ["", "| scheme | dNLL | top-1 | recall | fetched / step | distinct / layer | "
-              + " | ".join(f"dNLL - {c} [95% CI]" for c in cols) + " | dNLL - s2 same k [95% CI] |",
-              "|---|---|---|---|---|---|" + "---|" * (len(cols) + 1)]
+    lines += ["", "| scheme | dNLL | " + ("KL | " if kl else "") + "top-1 | recall | fetched / step | distinct / layer | "
+              + " | ".join(f"dNLL - {c} [95% CI]" for c in cols) + " | dNLL - s2 same k [95% CI] |"
+              + "".join(f" KL - {c} [95% CI] |" for c in (cols if kl else [])),
+              "|---|---|" + ("---|" if kl else "") + "---|---|---|---|" + "---|" * (len(cols) + 1)
+              + ("---|" * len(cols) if kl else "")]
     for lab in labels:
         g = by[lab]
         fetch = g.policy.iloc[0] != "none"
         rec = "" if g.recall_vs_oracle.isna().all() else f"{g.recall_vs_oracle.mean():.2f}"
         s2 = f"s2@{lab.split('@')[1]}" if "@" in lab else None
         vs_s2 = _ci(g.delta_nll, by[s2].delta_nll) if s2 in by and s2 != lab else ""
-        lines.append(f"| {lab} | {g.delta_nll.mean():+.4f} | {g.top1_agree.mean():.3f} | {rec} | "
+        lines.append(f"| {lab} | {g.delta_nll.mean():+.4f} | " + (f"{g.kl_bf16.mean():.4f} | " if kl else "")
+                     + f"{g.top1_agree.mean():.3f} | {rec} | "
                      f"{f'{g.fetched_pairs_per_step.mean():,.0f}' if fetch else ''} | "
                      f"{f'{g.distinct_tokens_per_layer_step.mean():,.0f}' if fetch else ''} | "
                      + " | ".join("" if lab == c else _ci(g.delta_nll, by[c].delta_nll) for c in cols)
-                     + f" | {vs_s2} |")
+                     + f" | {vs_s2} |"
+                     + "".join(f" {'' if lab == c else _ci(g.kl_bf16, by[c].kl_bf16)} |" for c in (cols if kl else [])))
     lines.append("")
 
     match = [lab for lab in labels if lab.endswith("@match")]
@@ -181,8 +202,9 @@ def summarize(d: Path, join: Path | None = None, join_rows=("int3",)) -> str:
                   f"difference between the {base} and {nxt} histories, so its resident history equals uniform {nxt}'s. "
                   "Negative = better than uniform " + nxt + "." + (f" By > noise = more than {thr:.4f}." if thr else ""),
                   "", f"| scheme | resident ({base} + fetch) | resident {nxt} | dNLL | dNLL {nxt} | "
-                  f"dNLL - {nxt} [95% CI] | median difference | beats {nxt} | by > noise | loses by > noise |",
-                  "|---|---|---|---|---|---|---|---|---|---|"]
+                  f"dNLL - {nxt} [95% CI] | median difference | beats {nxt} | by > noise | loses by > noise |"
+                  + (f" KL | KL {nxt} | KL - {nxt} [95% CI] | lower KL than {nxt} |" if kl else ""),
+                  "|---|---|---|---|---|---|---|---|---|---|" + ("---|---|---|---|" if kl else "")]
         for lab in match:
             g = by[lab]
             dd = (g.delta_nll - un.loc[g.index]).dropna()
@@ -191,7 +213,11 @@ def summarize(d: Path, join: Path | None = None, join_rows=("int3",)) -> str:
                          f"{un.loc[g.index].mean():+.4f} | {_ci(g.delta_nll, un)} | {dd.median():+.4f} | "
                          f"{int((dd < 0).sum())}/{len(dd)} | "
                          f"{f'{int((dd < -thr).sum())}/{len(dd)}' if thr else ''} | "
-                         f"{f'{int((dd > thr).sum())}/{len(dd)}' if thr else ''} |")
+                         f"{f'{int((dd > thr).sum())}/{len(dd)}' if thr else ''} |"
+                         + (f" {g.kl_bf16.mean():.4f} | {by[nxt].kl_bf16.loc[g.index].mean():.4f} | "
+                            f"{_ci(g.kl_bf16, by[nxt].kl_bf16)} | "
+                            f"{int(((g.kl_bf16 - by[nxt].kl_bf16.loc[g.index]).dropna() < 0).sum())}/{len(dd)} |"
+                            if kl and by[nxt].kl_bf16.notna().any() else (" | | | |" if kl else "")))
         lines.append("")
 
     n = len(un)

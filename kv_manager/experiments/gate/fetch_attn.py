@@ -494,6 +494,33 @@ def hist_bytes(bits, P, lo, hi, block, kvh, d, n_layers):
 
 
 @torch.no_grad()
+def generate_self_target(model, hist_ids, fresh_ids, max_new, temperature=0.0, seed=0, eos_ids=()):
+    """The model's own next message after the pause: bf16 prefill of the history and the tool output (which ends
+    with the assistant header), then up to max_new tokens, greedy at temperature 0, otherwise sampled from
+    softmax(logits / temperature) with a torch.Generator seeded with `seed` (no top-k/top-p). Stops after the
+    first token in eos_ids (kept, like the end-of-turn token of the real targets). Returns a list of token ids."""
+    from experiments.gate.run_gate import prefill
+
+    dev = hist_ids.device
+    cache, logits = prefill(model, torch.cat([hist_ids, fresh_ids], dim=1))
+    logits = logits[0]
+    gen = torch.Generator(device=dev).manual_seed(int(seed)) if temperature > 0 else None
+    out, eos = [], set(int(e) for e in eos_ids)
+    for i in range(max_new):
+        if temperature > 0:
+            t = int(torch.multinomial(torch.softmax(logits / temperature, dim=-1), 1, generator=gen))
+        else:
+            t = int(logits.argmax())
+        out.append(t)
+        if t in eos or i == max_new - 1:
+            break
+        o = model(input_ids=torch.tensor([[t]], device=dev), past_key_values=cache, use_cache=True)
+        cache, logits = o.past_key_values, o.logits[0, -1].float()
+    del cache
+    return out
+
+
+@torch.no_grad()
 def run_pause(model, hist_ids, fresh_ids, target_ids, rows, block=16, recent=64, max_steps=64,
               check=False, diag=False, base_bits=2, prefill_k=0, prefill_chunk=64):
     """Run every row on one pause. Returns per-row log-probs/argmax of the first max_steps target
@@ -567,6 +594,11 @@ def run_pause(model, hist_ids, fresh_ids, target_ids, rows, block=16, recent=64,
     src = torch.tensor(ctx.score_src, device=dev)  # a shadow's spec row (others: themselves)
     logp = torch.zeros(R, T, device=dev)
     pred = torch.zeros(R, T, dtype=torch.long, device=dev)
+    # KL(bf16 row || row) of the next-token distribution, summed over steps (the bf16 row: bf16 history and
+    # tool-output prefill, no fetch)
+    ref = next((i for i, r in enumerate(rows) if r.hist == "bf16" and r.fresh == "bf16" and r.policy == "none"
+                and not r.shadow), None)
+    kl_sum = torch.zeros(R, device=dev)
     guesses = torch.zeros(R, T, dtype=torch.long, device=dev)  # shadows: token decoded as the guess
     actual = torch.zeros(R, T, dtype=torch.long, device=dev)   # shadows: the token that guess stood for
     pos0 = P + F_all - 2
@@ -590,8 +622,12 @@ def run_pause(model, hist_ids, fresh_ids, target_ids, rows, block=16, recent=64,
             pos = torch.full((R, 1), pos0 + 1 + j, device=dev) + chain[:, None].long()
             out = model(input_ids=x, position_ids=pos, use_cache=False)
             lg = out.logits[:, -1].float()
-            logp[:, j] = torch.log_softmax(lg, dim=-1)[:, tgt[0, j]]
+            lsm = torch.log_softmax(lg, dim=-1)
+            logp[:, j] = lsm[:, tgt[0, j]]
             pred[:, j] = lg.argmax(dim=-1)
+            if ref is not None:
+                kl_sum += (lsm[ref].exp()[None] * (lsm[ref][None] - lsm)).sum(dim=-1)
+            del lsm
             # spec_chain: the shadow's output (conditioned on its own guess); spec: the spec row's greedy
             # prediction given the real token it just decoded
             guess = torch.where(same, pred[src, j], pred[:, j])
@@ -618,6 +654,7 @@ def run_pause(model, hist_ids, fresh_ids, target_ids, rows, block=16, recent=64,
             "resident_bytes": (nbytes[f"{r.hist}_bytes"] + (k_res * kvh * n_layers * pair_bytes
                                                             if r.policy != "none" else 0)),
             "spec_guess_acc": float(guess_hits[sh]) / T if sh is not None else float("nan"),
+            "kl_bf16": float(kl_sum[i]) / T if ref is not None else float("nan"),
         })
     res["guesses"] = [{"scheme": rows[s_].name, "k_label": k_label[s_], "step": j,
                        "guess_id": int(g_), "actual_id": int(a_), "match": int(g_ == a_)}
