@@ -181,8 +181,10 @@ def _int2_attention(ctx, hist, fresh, i, q, src=None, own=None):
 
 
 @pytest.mark.parametrize("seed", [7, 8])
-def test_speculative_shadow_matches_bruteforce(seed):
-    rows = [Row("spec", policy="spec", k=5), Row("spec_shadow", policy="spec", k=5, shadow=True)]
+def test_chained_speculative_shadow_matches_bruteforce(seed):
+    # spec_chain (SpeCache as published): selects with the scores its shadow stored at the previous step
+    rows = [Row("spec_chain", policy="spec_chain", k=5),
+            Row("spec_chain_shadow", policy="spec_chain", k=5, shadow=True)]
     hist, fresh, g = _cache(seed)
     ctx = _ctx(rows, hist, fresh, t=2, g=g)
     want = []
@@ -210,6 +212,59 @@ def test_speculative_shadow_matches_bruteforce(seed):
     # the shadow's int2 attention is stored as the spec row's score for the next step
     p_mid, _ = _int2_attention(ctx, hist, fresh, 1, q, src=0, own=(k[1, :, 0], v[1, :, 0]))
     assert torch.allclose(ctx.prev[0][0], p_mid.sum(dim=1), atol=1e-6)
+
+
+@pytest.mark.parametrize("seed", [11, 12])
+def test_anchored_speculative_shadow_matches_bruteforce(seed):
+    # spec: the shadow sits at the spec row's position, sees the spec row's generated tokens before the current
+    # one plus its own token, and its current int2 attention selects this step's set for both rows
+    rows = [Row("spec", policy="spec", k=5), Row("spec_shadow", policy="spec", k=5, shadow=True)]
+    hist, fresh, g = _cache(seed)
+    t = 2
+    ctx = _ctx(rows, hist, fresh, t=t, g=g)
+    q, out = _call(ctx, t=t, fetch=True, g=g)
+    k, v = _call.kv
+    gk, gv = ctx.gen[0]
+    K = torch.cat([hist["int2"][0][0], fresh["int2"][0][0], gk[0, :, :t], k[1, :, 0][:, None]], dim=1)
+    V = torch.cat([hist["int2"][0][1], fresh["int2"][0][1], gv[0, :, :t], v[1, :, 0][:, None]], dim=1)
+    p = torch.softmax(torch.einsum("kgd,kpd->kgp", q[1, :, 0].reshape(KVH, G, D), K) * SCALE, dim=-1)
+    want = [sorted((p[h, :, LO:HI].sum(dim=0).topk(5).indices + LO).tolist()) for h in range(KVH)]
+    for i in (0, 1):
+        assert [sorted(x.tolist()) for x in ctx.last_idx[i]] == want
+    assert torch.allclose(out[0, 0], _reference(ctx, hist, fresh, 0, q, want), atol=1e-5)
+    K16, V16 = hist["bf16"][0]
+    Kh, Vh = (x.clone() for x in hist["int2"][0])
+    for h in range(KVH):
+        Kh[h, want[h]], Vh[h, want[h]] = K16[h, want[h]], V16[h, want[h]]
+    K = torch.cat([Kh, K[:, P:]], dim=1)
+    V = torch.cat([Vh, V[:, P:]], dim=1)
+    ref = torch.stack([torch.softmax(q[1, hq, 0] @ K[hq // G].T * SCALE, -1) @ V[hq // G] for hq in range(KVH * G)])
+    assert torch.allclose(out[1, 0], ref, atol=1e-5)
+    assert not ctx.prev[0]  # nothing is carried to the next step
+
+
+@pytest.mark.parametrize("seed", [13, 14])
+def test_anchored_spec_with_correct_guess_equals_s2(seed):
+    # a correct guess: the shadow decodes the spec row's own token, so it must select exactly s2's set
+    rows = [Row("spec", policy="spec", k=5), Row("spec_shadow", policy="spec", k=5, shadow=True),
+            Row("s2", policy="s2", k=5)]
+    hist, fresh, g = _cache(seed)
+    t = 2
+    ctx = _ctx(rows, hist, fresh, t=t, g=g)
+    ctx.gen[0][0][2], ctx.gen[0][1][2] = ctx.gen[0][0][0], ctx.gen[0][1][0]  # s2 row: same generated tokens
+    R = len(rows)
+    ctx.t, ctx.fetch = t, True
+    q1 = torch.randn(1, KVH * G, 1, D, generator=g)
+    k1, v1 = torch.randn(1, KVH, 1, D, generator=g), torch.randn(1, KVH, 1, D, generator=g)
+    q, k, v = q1.expand(R, -1, -1, -1).clone(), k1.expand(R, -1, -1, -1).clone(), v1.expand(R, -1, -1, -1).clone()
+    fa._CTX = ctx
+    try:
+        out, _ = fetch_attention(_Mod(), q, k, v, None, SCALE)
+    finally:
+        fa._CTX = None
+    sets = [[sorted(x.tolist()) for x in ctx.last_idx[i]] for i in range(R)]
+    assert sets[0] == sets[1] == sets[2]
+    assert torch.allclose(out[0], out[2], atol=1e-5) and torch.allclose(out[1], out[2], atol=1e-5)
 
 
 @pytest.mark.parametrize("seed", [9, 10])

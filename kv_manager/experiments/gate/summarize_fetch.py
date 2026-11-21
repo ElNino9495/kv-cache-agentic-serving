@@ -34,7 +34,7 @@ from experiments.gate.plot_gate import paired_ci
 ROOT = Path(__file__).resolve().parents[2]
 KEY = ["instance_id", "turn"]
 ORDER = ["bf16", "noise_ctrl", "int1", "int2", "int3", "fetch_all", "fetch_all_noprefill", "s1", "sens_a",
-         "sens_b", "spec", "s2", "s2sens_a", "s2sens_b", "oracle", "s1_layer"]
+         "sens_b", "spec_chain", "spec", "s2", "s2sens_a", "s2sens_b", "oracle", "s1_layer"]
 CONTROLS = ("bf16", "noise_ctrl", "int1", "int2", "int3", "fetch_all", "fetch_all_noprefill")
 MB = 2 ** 20
 
@@ -119,10 +119,12 @@ def summarize(d: Path, join: Path | None = None, join_rows=("int3",)) -> str:
               f"{base} {s[f'check_{ck}_max_abs_logp'].max():.3f}"]
     if "seconds" in s and s.seconds.notna().any():
         lines.append(f"- {s.seconds.mean():.1f} s per pause on average, {s.seconds.sum() / 60:.1f} min total")
-    spec = [lab for lab in labels if lab.startswith("spec@")]
-    if spec and "spec_guess_acc" in m:
-        lines.append("- speculative token (spec rows): greedy guess of the next input correct on "
-                     + ", ".join(f"{by[lab].spec_guess_acc.mean():.1%} ({lab})" for lab in spec) + " of steps")
+    for pre, what in (("spec@", "spec rows, guess of each step's input from the real previous token"),
+                      ("spec_chain@", "spec_chain rows, SpeCache's chained guess of the next input")):
+        spec = [lab for lab in labels if lab.startswith(pre)]
+        if spec and "spec_guess_acc" in m:
+            lines.append(f"- speculative token ({what}): correct on "
+                         + ", ".join(f"{by[lab].spec_guess_acc.mean():.1%} ({lab})" for lab in spec) + " of steps")
     if "k_match" in s:
         lines.append(f"- k = match: {s.k_match.mean():,.0f} tokens per KV head and layer on average "
                      f"(min {s.k_match.min():,}, max {s.k_match.max():,}), i.e. {base} + fetched set = {nxt}'s memory")

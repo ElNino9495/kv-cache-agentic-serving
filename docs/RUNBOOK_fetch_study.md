@@ -1,4 +1,10 @@
-# Runbook: per-step fetch study (run 2)
+# Runbook: per-step fetch study (runs 2 and 3)
+
+> **Status (21 Nov 2026).** Run 2 is done: it ran on 2 × A100 80 GB with this runbook, and the results are
+> committed (`kv_manager/results/gate_fetch/llama-3.1-8b-instruct-base2/` and `-base1/`). Run 3 runs on the
+> project's Slurm cluster (`experiments/gate/greatlakes_fetch.sbatch`), not with this runbook. Part B still works
+> for repeating a run on another Linux machine. It now also runs run 3's corrected speculative-token rows, but
+> without prefill fetch.
 
 For someone running the next experiment on their own Linux machine with NVIDIA A100s or RTX A6000s (a shared
 server is fine), who knows the project up
@@ -36,7 +42,7 @@ over the 2-bit keys, k=128) scored +0.008. Two reasons:
 Run 1 also measured the noise from bf16 rounding: per-pause differences below about 0.009 nats are noise, so only
 averages over the 31 pauses count.
 
-**Run 2 (this run) closes the remaining gaps:**
+**Run 2 (done, 21 Nov 2026) closed most of the remaining gaps:**
 
 1. **SpeCache's actual selection rule**: a speculative copy of the model's next token, decoded alongside, chooses
    what to fetch. Run 1 only had cruder stand-ins.
@@ -45,7 +51,19 @@ averages over the 31 pauses count.
 3. **Fetching while the tool output is processed**, to lift the ceiling found in run 1.
 4. **Diagnostics for the one pause where the previous-token rule fails badly**, so we can see why.
 
-**Why it matters.** This run decides how the project's final system reloads KV after a tool call: either plain
+**What run 2 found.** At equal GPU memory, fetching did not beat plain uniform reload on either base.
+- 2-bit + fetch vs. uniform 3-bit: best +0.0072 vs. +0.0019.
+- 1-bit + fetch vs. uniform 2-bit: best +0.0415 vs. +0.0302.
+
+On the 1-bit base, even "fetch everything every step" (+0.044) is worse than uniform 2-bit, because the tool output
+was processed over the 1-bit history. Item 3 above (fetching during the tool output) was not run. The speculative
+token also guessed right on only a third of the steps or less.
+
+**Run 3 (next, on the Slurm cluster)** runs both bases with fetching during the tool output (128 tokens per chunk).
+It also fixes the speculative token: `spec` now guesses each step's token from the real previous token, and
+`spec_chain` keeps the paper's chained version for comparison. Every guess is logged in `spec_guesses.csv`.
+
+**Why it matters.** These runs decide how the project's final system reloads KV after a tool call: either plain
 uniform low-bit reload (already built), or a per-step fetch path, which is worth building only if it beats uniform
 reload at equal memory. The result feeds directly into the final evaluation.
 
@@ -125,14 +143,15 @@ You can close the terminal after `started: ...` is printed; the run continues in
 
 ### 4. Expected time and memory
 
-Run 1 (about half as many schemes) took 22 minutes on an NVIDIA A40. These figures extrapolate from it; this
-run will record the real ones.
+Measured: run 2 took 27–29 minutes per base on 2 × A100 80 GB, in parallel, about 31 minutes from start to the
+packed file (55 schemes). The corrected speculative rows add about 20% (65 schemes). The figures below allow for
+that; the A6000 figures are an estimate.
 
 | Machine | Setup (first time) | Experiment |
 |---|---|---|
-| 1 × A100 (40 or 80 GB) | 15–30 min (downloads) | about 1–1.5 hours (bases one after the other) |
-| 2+ × A100 | 15–30 min | about 40–60 minutes (bases in parallel) |
-| 2 × RTX A6000 | 15–30 min | about 45–75 minutes (bases in parallel; similar speed to the A40 run 1 used) |
+| 1 × A100 (40 or 80 GB) | 15–30 min (downloads) | about 70–90 minutes (bases one after the other) |
+| 2+ × A100 | 15–30 min | about 35–45 minutes (bases in parallel; run 2 measured 31 min with fewer schemes) |
+| 2 × RTX A6000 | 15–30 min | about 50–70 minutes (bases in parallel; A40-class speed, ~1.5× slower than an A100) |
 
 Estimated peak GPU memory per run (largest pause, 34k tokens of history):
 
@@ -182,6 +201,6 @@ Exactly one file, printed at the end of the run:
 kv_manager/results/fetch_study_results_<date-time>.tgz
 ```
 
-It contains both bases' results (`metrics.csv`, `samples.csv`, `summary.md`, the diagnostic folder), the smoke
-checks, all logs and an environment report (`nvidia-smi`, installed package versions). If the run failed part-way,
+It contains both bases' results (`metrics.csv`, `samples.csv`, `summary.md`, `spec_guesses.csv`, the diagnostic
+folder), the smoke checks, all logs and an environment report (`nvidia-smi`, installed package versions). If the run failed part-way,
 send the newest `.tgz` anyway, or the `results/fetch_logs/` folder if no `.tgz` was made.

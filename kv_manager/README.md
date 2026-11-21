@@ -92,8 +92,11 @@ python -m experiments.gate.summarize_uniform  # results/gate_uniform/summary.md,
 without fetching, then teacher-forces the first 64 target tokens one at a time. At every step and layer,
 each scheme swaps its own top-k history tokens per KV head to bf16 for that step only (k in 16/32/64/128):
 previous-step int2 attention (`s1`), current-step int2 attention (`s2`, SpeCache's non-speculative
-variant), SpeCache's speculative token (`spec`: the model's own greedy guess of the next input, decoded
-alongside in a shadow row, selects the next step's set), sensitivity scores on the previous query
+variant), two speculative-token rows, each with a shadow row that decodes the guess: `spec` guesses each step's
+input from the real previous target token (the spec row's greedy prediction one step earlier; a correct guess
+gives exactly `s2`'s set), and `spec_chain` is SpeCache as published (each guess is the output of the previous
+guess; its scores select the next step's set). Every guess and whether it matched goes to `spec_guesses.csv`.
+Also sensitivity scores on the previous query
 (`sens_a` deployable, `sens_b` first-order with bf16 keys) and on the current query (`s2sens_a`,
 `s2sens_b`), the bf16 oracle, and `s1_layer` (one set per layer). Also uniform int2/int3, `fetch_all`
 (the ceiling given an int2 tool-output prefill) and `noise_ctrl` (bf16 rounding noise floor). All
@@ -113,7 +116,10 @@ CUDA_VISIBLE_DEVICES=0 python -m experiments.gate.run_fetch                 # re
 CUDA_VISIBLE_DEVICES=0 python -m experiments.gate.run_fetch --base-bits 1   # results/gate_fetch/<model>-base1/
 CUDA_VISIBLE_DEVICES=0 python -m experiments.gate.run_fetch --diagnose      # per-step fetch logs, xarray t85
 python -m experiments.gate.summarize_fetch --dir results/gate_fetch/<model>-base1   # CIs, equal memory, bytes
-# Great Lakes: ACCOUNT=<your_account> bash experiments/gate/greatlakes_fetch.sbatch   (MODE, BASES, PREFILL_FETCH_K)
+# Great Lakes: ACCOUNT=<your_account> bash experiments/gate/greatlakes_fetch.sbatch
+#              one A40 job per base (BASES, default "2 1"), PREFILL_FETCH_K=128 by default, base 1 without int3;
+#              the job finishing second joins int3 from this run's base 2 (RUN_ID). Resume one base:
+#              ACCOUNT=<acct> RESUME=1 RUN_ID=<id> BASES=<b> bash experiments/gate/greatlakes_fetch.sbatch
 # Any Linux + A100s: bash experiments/gate/local_fetch.sh   (detects GPUs; see docs/RUNBOOK_fetch_study.md)
 # CloudLab:    bash experiments/gate/cloudlab_fetch.sh   (base 2 and base 1 in parallel on GPUs 0 and 1, one tmux
 #              window each; base 1 skips the int3 copy to fit 40 GB and its summary joins int3 from base 2

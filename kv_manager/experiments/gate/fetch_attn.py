@@ -21,8 +21,13 @@ tests/test_fetch_partial.py checks this against attention over a cache rebuilt w
 Selection policies (top-k over the quantized middle tokens, per KV head unless per_layer):
   s1        previous step's attention over int2 keys (query heads of a KV head summed)
   s2        current step's attention over int2 keys (SpeCache's non-speculative variant)
-  spec      SpeCache: a speculative token (the model's own greedy guess of the next input) is decoded
-            alongside every step in a shadow row; its attention over int2 keys selects the next step's set
+  spec      speculative token anchored on the real tokens: at step j a shadow row decodes the guess of
+            step j's input (the spec row's greedy prediction at step j-1, i.e. given the real previous
+            target token) at the same position; its attention over int2 keys selects step j's set. A
+            correct guess gives exactly s2's set; the row measures what wrong guesses cost.
+  spec_chain SpeCache as published (arXiv 2503.16163, Eq. 1): the shadow decodes the previous speculative
+            token's output at position +1 (each guess conditioned on the previous guess, not on the real
+            token); its attention over int2 keys selects the next step's set
   sens_a    previous-step attention x query-independent quantization error:
             sum_g p_g,i (||dV_i|| + ||q_g|| ||dK_i|| / sqrt(d)), deployable (norms stored at offload)
   sens_b    previous-step attention x first-order output error of fixing token i:
@@ -45,10 +50,15 @@ summed over the chunk's queries and the query heads of the KV head) are swapped 
 only. The fetch rows and fetch_all then start from this prefill ("pf" tool-output group); the uniform base
 row and fetch_all_noprefill keep the plain base prefill, so the ceiling lift is measured in the same run.
 
-Shadow rows (spec): the shadow of a spec row decodes the guessed next token at position +1. It sees
-the same history view as its spec row (int2 + the spec row's fetched set at that step), the same tool
-output, the spec row's generated tokens including the current one, and itself; its own KV is
-discarded. Its argmax is the next guess. The shadow scores with int2 keys (as s1/s2 do).
+Shadow rows: each spec / spec_chain row is directly followed by its shadow, which shares its fetched set
+(same history view), tool output and generated tokens; the shadow's own KV is discarded and it is not a
+scheme (not written out). The shadow scores with int2 keys (as s1/s2 do).
+  spec shadow        same position as its spec row; sees the spec row's generated tokens before the current
+                     one, then its own token (the guess of the current input). Selects for the current step.
+  spec_chain shadow  position +1; sees the spec row's generated tokens including the current one, then its own
+                     token (the guess of the next input). Its argmax is the next guess; its scores select for
+                     the next step.
+run_pause logs every guess and whether it matched the token it guessed (res["guesses"]).
 """
 
 import math
@@ -62,9 +72,10 @@ from experiments.gate.fakequant import roundtrip
 from kvm.quant import block_bytes
 
 ATTN_NAME = "gate_fetch"
-PREV_POLICIES = ("s1", "sens_a", "sens_b", "spec")   # select with scores stored at the previous step
+PREV_POLICIES = ("s1", "sens_a", "sens_b", "spec_chain")   # select with scores stored at the previous step
 CUR_INT2_POLICIES = ("s2", "s2sens_a", "s2sens_b")   # select with the current step's int2 attention
-FETCH_POLICIES = PREV_POLICIES + CUR_INT2_POLICIES + ("oracle", "all")
+SPEC_POLICIES = ("spec", "spec_chain")               # rows that come with a shadow row
+FETCH_POLICIES = PREV_POLICIES + CUR_INT2_POLICIES + ("spec", "oracle", "all")
 _CTX = None
 
 
@@ -76,7 +87,7 @@ class Row:
     policy: str = "none"
     k: int = 0
     per_layer: bool = False
-    shadow: bool = False  # speculative-token row paired with the spec row of the same k / per_layer
+    shadow: bool = False  # speculative-token row; directly follows its spec / spec_chain row (same policy, k)
 
 
 MATCH = -1  # k resolved per pause so that base + fetched set uses the memory of uniform int(base + 1)
@@ -98,7 +109,9 @@ def default_rows(ks=(16, 32, 64, 128, MATCH), base_bits=2, prefill=False, unifor
     for k in ks:
         rows += [Row(p, B, fr, policy=p, k=k) for p in ("s1", "s2", "sens_a", "sens_b", "oracle", "s2sens_a", "s2sens_b")]
         rows.append(Row("s1_layer", B, fr, policy="s1", k=k, per_layer=True))
-        rows += [Row("spec", B, fr, policy="spec", k=k), Row("spec_shadow", B, fr, policy="spec", k=k, shadow=True)]
+        rows += [Row("spec", B, fr, policy="spec", k=k), Row("spec_shadow", B, fr, policy="spec", k=k, shadow=True),
+                 Row("spec_chain", B, fr, policy="spec_chain", k=k),
+                 Row("spec_chain_shadow", B, fr, policy="spec_chain", k=k, shadow=True)]
     return rows
 
 
@@ -138,12 +151,16 @@ class FetchContext:
         for i, r in enumerate(rows):
             if r.shadow:
                 s = rows[i - 1] if i else None
-                assert s is not None and s.policy == "spec" and not s.shadow and s.k == r.k \
-                    and s.per_layer == r.per_layer, "a spec_shadow row must directly follow its spec row"
+                assert s is not None and r.policy in SPEC_POLICIES and s.policy == r.policy and not s.shadow \
+                    and s.k == r.k and s.per_layer == r.per_layer and s.hist == r.hist and s.fresh == r.fresh, \
+                    "a shadow row must directly follow its spec / spec_chain row (same policy, k, per_layer)"
                 self.pair[i] = i - 1
+        self.shadow_of = {s: i for i, s in self.pair.items()}
         self.score_src = [self.pair.get(i, i) for i in range(R)]
         self.gen_src = torch.tensor(self.score_src, device=dev, dtype=torch.long)
         self.is_shadow = torch.tensor([r.shadow for r in rows], device=dev)
+        # spec shadows sit at their spec row's position: they must not see the spec row's current token
+        self.same_pos_shadow = torch.tensor([r.shadow and r.policy == "spec" for r in rows], device=dev)
 
         self.by_hist = {b: ix(lambda r, b=b: r.hist == b) for b in {r.hist for r in rows}}
         self.by_fresh = {g: ix(lambda r, g=g: r.fresh == g) for g in {r.fresh for r in rows}}
@@ -203,6 +220,8 @@ def fetch_attention(module, query, key, value, attention_mask, scaling, dropout=
     lt[..., F:F + t + 1] = torch.einsum("rkgd,rktd->rkgt", q, gk[src, :, :t + 1].float()) * scaling
     own = torch.einsum("rkgd,rkd->rkg", q, k_own) * scaling
     lt[..., -1] = torch.where(ctx.is_shadow[:, None, None], own, torch.full_like(own, float("-inf")))
+    if ctx.same_pos_shadow.any():
+        lt[ctx.same_pos_shadow, :, :, F + t] = float("-inf")
     lh_pre = lh.clone() if ctx.diag else None
 
     def mid_probs(lhist, rows):
@@ -220,7 +239,7 @@ def fetch_attention(module, query, key, value, attention_mask, scaling, dropout=
     # int2 (pre-fetch) probabilities of rows that score with them, before any logit is replaced
     p2 = {}
     for (pol, per_layer, base), rr in ctx.groups.items():
-        if pol in PREV_POLICIES or pol in CUR_INT2_POLICIES:
+        if pol in PREV_POLICIES or pol in CUR_INT2_POLICIES or pol == "spec":
             rows = torch.tensor(rr, device=dev)
             p2[(pol, per_layer, base)] = (rows, mid_probs(lh[rows], rows))
     l16 = None
@@ -239,6 +258,9 @@ def fetch_attention(module, query, key, value, attention_mask, scaling, dropout=
             else:
                 if pol in PREV_POLICIES:
                     score = torch.stack([ctx.prev[l][ctx.score_src[i]] for i in rr])
+                elif pol == "spec":  # every spec row and its shadow use the shadow's current int2 attention
+                    pr = p2[(pol, per_layer, base)][1].sum(dim=2)
+                    score = pr[[rr.index(ctx.shadow_of.get(i, i)) for i in rr]]
                 elif pol in CUR_INT2_POLICIES:
                     pr = p2[(pol, per_layer, base)][1]
                     if pol == "s2":
@@ -322,9 +344,9 @@ def fetch_attention(module, query, key, value, attention_mask, scaling, dropout=
 
     # scores for the next step's selection (previous-step policies; shadows score for their spec row)
     for (pol, per_layer, base), (rows, pr) in p2.items():
-        if pol in CUR_INT2_POLICIES:
+        if pol in CUR_INT2_POLICIES or pol == "spec":
             continue
-        if pol in ("s1", "spec"):
+        if pol in ("s1", "spec_chain"):
             score = pr.sum(dim=2)
         elif pol == "sens_a":
             e = ctx.errors(l)
@@ -335,7 +357,7 @@ def fetch_attention(module, query, key, value, attention_mask, scaling, dropout=
             K2m, V2m = (x[:, lo:hi].float() for x in ctx.hist[ctx.base][l])
             score = (pr * first_order_norm(V16m - V2m, K16m - K2m, V2m, q[rows], o[rows], scaling)).sum(dim=2)
         for j, i in enumerate(rows.tolist()):
-            if pol == "spec":
+            if pol == "spec_chain":
                 if ctx.rows[i].shadow:
                     ctx.prev[l][ctx.pair[i]] = score[j]
             else:
@@ -540,29 +562,41 @@ def run_pause(model, hist_ids, fresh_ids, target_ids, rows, block=16, recent=64,
     ctx = FetchContext(rows, {b: hist[b] for b in hist}, fresh, lo, hi, n_layers, T + 1, base=base)
     ctx.diag = diag
     shadow = torch.tensor([r.shadow for r in rows], device=dev)
+    chain = torch.tensor([r.shadow and r.policy == "spec_chain" for r in rows], device=dev)  # position +1
+    same = ctx.same_pos_shadow                                                              # spec shadows
+    src = torch.tensor(ctx.score_src, device=dev)  # a shadow's spec row (others: themselves)
     logp = torch.zeros(R, T, device=dev)
     pred = torch.zeros(R, T, dtype=torch.long, device=dev)
-    guess_hits = torch.zeros(R, device=dev)
+    guesses = torch.zeros(R, T, dtype=torch.long, device=dev)  # shadows: token decoded as the guess
+    actual = torch.zeros(R, T, dtype=torch.long, device=dev)   # shadows: the token that guess stood for
     pos0 = P + F_all - 2
     with fetch_mode(model, ctx):
-        # warm-up: second-to-last tool-output token, no fetching; shadows decode the last one (known)
+        # warm-up: second-to-last tool-output token, no fetching; spec_chain shadows decode the last one (known)
         ctx.t, ctx.fetch = 0, False
-        x = torch.where(shadow, fresh_ids[0, -1], fresh_ids[0, -2])[:, None]
-        pos = torch.full((R, 1), pos0, device=dev) + shadow[:, None].long()
+        x = torch.where(chain, fresh_ids[0, -1], fresh_ids[0, -2])[:, None]
+        pos = torch.full((R, 1), pos0, device=dev) + chain[:, None].long()
         out = model(input_ids=x, position_ids=pos, use_cache=False)
-        guess = out.logits[:, -1].argmax(dim=-1)  # shadows: guess of target[0]
+        am = out.logits[:, -1].argmax(dim=-1)
+        # spec_chain shadows: their own output (guess of target[0], the input of step 1);
+        # spec shadows: their spec row's greedy prediction of step 0's input (the last tool-output token)
+        guess = torch.where(same, am[src], am)
         ctx.fetch = True
         for j in range(T):
             ctx.t = j + 1
             real = fresh_ids[0, -1] if j == 0 else tgt[0, j - 1]
-            guess_hits += (shadow & (guess == tgt[0, j])).float()
+            guesses[:, j] = guess
+            actual[:, j] = torch.where(chain, tgt[0, j], real)  # chain guesses the next input, spec this one
             x = torch.where(shadow, guess, real)[:, None]
-            pos = torch.full((R, 1), pos0 + 1 + j, device=dev) + shadow[:, None].long()
+            pos = torch.full((R, 1), pos0 + 1 + j, device=dev) + chain[:, None].long()
             out = model(input_ids=x, position_ids=pos, use_cache=False)
             lg = out.logits[:, -1].float()
             logp[:, j] = torch.log_softmax(lg, dim=-1)[:, tgt[0, j]]
             pred[:, j] = lg.argmax(dim=-1)
-            guess = pred[:, j]  # shadows: guess of target[j + 1]
+            # spec_chain: the shadow's output (conditioned on its own guess); spec: the spec row's greedy
+            # prediction given the real token it just decoded
+            guess = torch.where(same, pred[src, j], pred[:, j])
+    hits = (guesses == actual) & shadow[:, None]
+    guess_hits = hits.float().sum(dim=1)
 
     res = {"P": P, "F": F_all, "T": T, "lo": lo, "hi": hi, "base_bits": base_bits, "k_match": k_match,
            **nbytes, "base_bytes": nbytes[f"{base}_bytes"],
@@ -585,6 +619,10 @@ def run_pause(model, hist_ids, fresh_ids, target_ids, rows, block=16, recent=64,
                                                             if r.policy != "none" else 0)),
             "spec_guess_acc": float(guess_hits[sh]) / T if sh is not None else float("nan"),
         })
+    res["guesses"] = [{"scheme": rows[s_].name, "k_label": k_label[s_], "step": j,
+                       "guess_id": int(g_), "actual_id": int(a_), "match": int(g_ == a_)}
+                      for sh_, s_ in ctx.pair.items()
+                      for j, (g_, a_) in enumerate(zip(guesses[sh_].tolist(), actual[sh_].tolist()))]
     res["last_idx"] = {i: v.cpu() for i, v in ctx.last_idx.items()}
     if diag:
         res["diag_records"] = ctx.diag_records

@@ -13,10 +13,12 @@ Rows (one batch, all on the same pause):
              any per-step fetch, given that the tool output was prefilled over int2
   noise_ctrl bf16 tool-output prefill + every middle token fetched: equal to the bf16 row in exact
              arithmetic, so its dNLL measures the bf16 rounding noise of the per-step path (noise floor)
-  s1, s2, spec, sens_a, sens_b, s2sens_a, s2sens_b, oracle   per KV head, k in --ks
+  s1, s2, spec, spec_chain, sens_a, sens_b, s2sens_a, s2sens_b, oracle   per KV head, k in --ks
   s1_layer   per layer (ablation)
-  spec_shadow  the speculative token decoded alongside each spec row (not a scheme; not written out,
-               its guess accuracy is reported on the spec row)
+  spec_shadow, spec_chain_shadow  the speculative token decoded alongside each spec / spec_chain row (not a
+               scheme; not written out; its guess accuracy is reported on the spec row, every guess in
+               spec_guesses.csv). spec guesses step j's input from the real previous target token (a correct
+               guess gives s2's set); spec_chain is SpeCache as published (each guess from the previous guess).
 
 Every pause also re-runs the bf16 and int2 rows with sdpa teacher forcing (run_gate.run_turn) over the
 same tokens and records the NLL difference and the largest per-token log-prob difference (samples.csv,
@@ -38,7 +40,7 @@ The fetch rows and fetch_all start from that prefill; the uniform base row and f
 plain base prefill, so the lift of the prefill ceiling is measured in the same run.
 
 Outputs (in --out-dir, default results/gate_fetch/<model>-base<b>[-pf<K>]/): metrics.csv (pause x row),
-samples.csv.
+samples.csv, spec_guesses.csv (pause x spec row x step: guessed token, the token it stood for, match).
 
     cd kv_manager
     CUDA_VISIBLE_DEVICES=0 python -m experiments.gate.run_fetch --max-samples 1 --check-nll-tol 0.05  # smoke
@@ -206,6 +208,7 @@ def main():
     pf = args.prefill_fetch_k > 0
     out_dir.mkdir(parents=True, exist_ok=True)
     metrics_path, samples_path = out_dir / "metrics.csv", out_dir / "samples.csv"
+    guesses_path = out_dir / "spec_guesses.csv"
     diag = None
     if args.diagnose:
         inst, turn = args.diagnose.rsplit(":", 1)
@@ -218,6 +221,7 @@ def main():
         else:
             metrics_path.unlink(missing_ok=True)
             samples_path.unlink(missing_ok=True)
+            guesses_path.unlink(missing_ok=True)
 
     dev = args.device
     pauses = {diag[0]: [diag[1]]} if diag else read_pauses(Path(args.samples_from))
@@ -303,6 +307,10 @@ def main():
                         **res["rows"][i], **{b: res[b] for b in ("bf16_bytes", "base_bytes", "int1_bytes",
                                                                    "int2_bytes", "int3_bytes")}})
         _append(metrics_path, out)
+        tokstr = lambda i: tok.decode([i])
+        _append(guesses_path, [{"instance_id": instance_id, "turn": s["turn"], **g,
+                                "guess_token": tokstr(g["guess_id"]), "actual_token": tokstr(g["actual_id"])}
+                               for g in res["guesses"]])
         chk = {k: v for k, v in res.items() if k.startswith("check_")}
         nll_diff = max(abs(chk[f"check_{n}_nll_perstep"] - chk[f"check_{n}_nll_batched"])
                        for n in ("bf16", "base"))
@@ -321,7 +329,7 @@ def main():
               + " | " + " ".join(f"{n} {by[n]:+.4f}" for n in ("int1", "int2", "int3", "fetch_all") if n in by)
               + " | " + " ".join(f"{n} {by[n]:+.4f}" for n in
                                  [f"{p_}@{k_}" for k_ in ("64", "match")
-                                  for p_ in ("s1", "s2", "spec", "s2sens_b", "oracle")] if n in by)
+                                  for p_ in ("s1", "s2", "spec", "spec_chain", "s2sens_b", "oracle")] if n in by)
               + f" | k_match {res['k_match']} | check NLL diff {nll_diff:.2e}, max|dlogp| bf16 "
               f"{chk.get('check_bf16_max_abs_logp', float('nan')):.2e} {base} "
               f"{chk.get('check_base_max_abs_logp', float('nan')):.2e}", flush=True)

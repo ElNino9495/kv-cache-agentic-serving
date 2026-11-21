@@ -101,8 +101,51 @@ def test_full_k_spec_and_sensitivity_equal_fetch_all(model, ids):
     full = HI - LO
     rows = [Row("fetch_all", policy="all"), Row("spec", policy="spec", k=full),
             Row("spec_shadow", policy="spec", k=full, shadow=True),
-            Row("s2sens_a", policy="s2sens_a", k=full), Row("s2sens_b", policy="s2sens_b", k=full)]
+            Row("s2sens_a", policy="s2sens_a", k=full), Row("s2sens_b", policy="s2sens_b", k=full),
+            Row("spec_chain", policy="spec_chain", k=full),
+            Row("spec_chain_shadow", policy="spec_chain", k=full, shadow=True)]
     res = _run(model, ids, rows)
-    for i in (1, 3, 4):
+    for i in (1, 3, 4, 5):
         assert torch.allclose(res["logp"][i], res["logp"][0], atol=1e-4), rows[i].name
     assert 0 <= res["rows"][1]["spec_guess_acc"] <= 1
+
+
+def test_speculative_guesses_logged_and_anchored(model, ids):
+    hist_ids, fresh_ids, tgt = ids
+    rows = [Row("int2"), Row("spec", policy="spec", k=8), Row("spec_shadow", policy="spec", k=8, shadow=True),
+            Row("spec_chain", policy="spec_chain", k=8),
+            Row("spec_chain_shadow", policy="spec_chain", k=8, shadow=True), Row("s2", policy="s2", k=8)]
+    res = _run(model, ids, rows)
+    g = res["guesses"]
+    assert len(g) == 2 * T and {x["scheme"] for x in g} == {"spec", "spec_chain"}
+    spec = sorted((x for x in g if x["scheme"] == "spec"), key=lambda x: x["step"])
+    chain = sorted((x for x in g if x["scheme"] == "spec_chain"), key=lambda x: x["step"])
+    real = [int(fresh_ids[0, -1])] + tgt[0, :-1].tolist()  # input of each step
+    assert [x["actual_id"] for x in spec] == real[:T]         # spec guesses the step's own input
+    assert [x["actual_id"] for x in chain] == tgt[0].tolist()  # spec_chain guesses the next step's input
+    # spec's guess at step j is the spec row's greedy prediction at step j-1 (given the real token it decoded)
+    assert [x["guess_id"] for x in spec[1:]] == res["pred"][1, :-1].tolist()
+    for row_i, xs in ((1, spec), (3, chain)):
+        assert all(x["match"] == int(x["guess_id"] == x["actual_id"]) for x in xs)
+        assert res["rows"][row_i]["spec_guess_acc"] == pytest.approx(sum(x["match"] for x in xs) / T)
+        assert all(x["k_label"] == "8" for x in xs)
+
+
+def test_anchored_spec_equals_s2_when_every_guess_is_right(model, ids):
+    # teacher-force the spec row's own greedy tokens (a fixed point, one more position per pass): then every
+    # spec guess is right and the spec row must reproduce s2 exactly
+    hist_ids, fresh_ids, tgt = ids
+    rows = [Row("spec", policy="spec", k=8), Row("spec_shadow", policy="spec", k=8, shadow=True),
+            Row("s2", policy="s2", k=8)]
+    fresh, tgt = fresh_ids.clone(), tgt.clone()
+    for _ in range(T + 2):
+        res = _run(model, (hist_ids, fresh, tgt), rows)
+        spec = sorted((x for x in res["guesses"] if x["scheme"] == "spec"), key=lambda x: x["step"])
+        fresh[0, -1] = spec[0]["guess_id"]  # step 0's input = the warm-up prediction
+        new = res["pred"][0:1].clone()
+        if torch.equal(new, tgt) and all(x["match"] for x in spec):
+            break
+        tgt = new
+    assert all(x["match"] for x in spec) and res["rows"][0]["spec_guess_acc"] == 1.0
+    assert torch.allclose(res["logp"][0], res["logp"][2], atol=1e-5)
+    assert torch.equal(res["pred"][0], res["pred"][2])
