@@ -14,3 +14,6 @@ __pycache__/
 .DS_Store
 /kv_manager/.gate-venv/
 /kv_manager/results/gate_fetch/.status-*
+# packed run archives and per-step fetch index dumps (large; the CSVs/summaries are committed instead)
+/kv_manager/results/*.tgz
+/kv_manager/results/**/fetch_idx.pt

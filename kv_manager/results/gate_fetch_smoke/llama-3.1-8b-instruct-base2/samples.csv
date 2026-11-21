@@ -1,0 +1,2 @@
+instance_id,turn,hist_len,fresh_len,steps,ref_nll,seconds,model,base_bits,prefill_fetch_k,k_match,est_peak_gb,peak_gpu_gb,uniform_refs,check_bf16_max_abs_logp,check_bf16_nll_batched,check_bf16_nll_perstep,check_base_max_abs_logp,check_base_nll_batched,check_base_nll_perstep,check_max_nll_diff
+sphinx-doc__sphinx-8548,23,8523,73,48,0.3810965120792389,41.77309765625,unsloth/Llama-3.1-8B-Instruct,2,0,527,22.32264192,21.614591488,2 3,0.07097113132476807,0.38238710165023804,0.3810965418815613,0.07437652349472046,0.44256848096847534,0.4420318603515625,0.0012905597686767578
