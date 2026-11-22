@@ -59,8 +59,33 @@ scheme (not written out). The shadow scores with int2 keys (as s1/s2 do).
                      token (the guess of the next input). Its argmax is the next guess; its scores select for
                      the next step.
 run_pause logs every guess and whether it matched the token it guessed (res["guesses"]).
+
+Multi-guess speculation (row field m > 1; m = 1 reproduces spec / spec_chain exactly): a spec-family row is followed
+by m shadows (cand 0..m-1). The candidates are the top-m tokens of the distribution the single guess is the argmax
+of: for the anchored family (spec_union, spec_wtd) the spec row's own next-token distribution at the previous step
+(given the real token), for the chained family (spec_chain_union, spec_chain_wtd) the cand-0 shadow's output at the
+previous step (the chain continues from candidate 0 only). Each shadow decodes its candidate and scores the base
+keys with its query (anchored: for the current step; chained: for the next step).
+  *_union   the union of each candidate's top-k per KV head (up to m*k tokens; the fetched count is reported)
+  *_wtd     top-k of sum_c p_c * score_c, p_c the candidate's probability (budget k, as s2)
+spec_cand_cover = share of steps where the token a guess stands for is among the m candidates.
+
+Fetch pool (row field pool = M > 0; policies s2_pool, spec_chain_pool): a bf16 pool of M tokens per (layer, KV head).
+Each step the row scores as s2 / spec_chain, takes the top-k, fetches only the ones not already in the pool (misses),
+evicts the least recently selected tokens (ties: the lower current score) to stay at M, and attends with the whole
+pool. Moved bytes = misses only; pool_hit_rate = 1 - misses / selected. With k = M the pool is the top-k set at
+every step (equal to s2 at that k). M may be MATCH (k_match) or HALF (k_match // 2).
+
+s2_k2score: ranks with the current query over the int2 reference copy's keys (sharper than an int1 base's), then
+attends over the row's own base with that set fetched (diagnostic: isolates the scoring keys).
+
+Base k2v1 (run_pause base="k2v1"): keys int2, values int1 (SpeCache's 1-bit quantizer), same KIVI blocking; its
+uniform reference for equal memory is int2. Rows may sit on different bases in one run (e.g. int1 comparators in a
+k2v1 run, with their own tool-output group "pf:int1"); MATCH resolves per row's base so that base + fetched set =
+uniform int2's memory (int(b+1) for an int base b).
 """
 
+import dataclasses
 import math
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -72,10 +97,16 @@ from experiments.gate.fakequant import roundtrip
 from kvm.quant import block_bytes
 
 ATTN_NAME = "gate_fetch"
-PREV_POLICIES = ("s1", "sens_a", "sens_b", "spec_chain")   # select with scores stored at the previous step
-CUR_INT2_POLICIES = ("s2", "s2sens_a", "s2sens_b")   # select with the current step's int2 attention
-SPEC_POLICIES = ("spec", "spec_chain")               # rows that come with a shadow row
-FETCH_POLICIES = PREV_POLICIES + CUR_INT2_POLICIES + ("spec", "oracle", "all")
+ANCHORED = ("spec", "spec_union", "spec_wtd")                                   # guess the current input
+CHAIN = ("spec_chain", "spec_chain_union", "spec_chain_wtd", "spec_chain_pool")  # chained guess of the next input
+UNION = ("spec_union", "spec_chain_union")
+WTD = ("spec_wtd", "spec_chain_wtd")
+POOL = ("s2_pool", "spec_chain_pool")
+PREV_POLICIES = ("s1", "sens_a", "sens_b") + CHAIN   # select with scores stored at the previous step
+CUR_INT2_POLICIES = ("s2", "s2sens_a", "s2sens_b", "s2_pool")   # select with the current step's base attention
+SPEC_POLICIES = ANCHORED + CHAIN                     # rows that come with shadow rows
+FETCH_POLICIES = PREV_POLICIES + CUR_INT2_POLICIES + ANCHORED + ("s2_k2score", "oracle", "all")
+NEXT = {"int1": "int2", "int2": "int3", "k2v1": "int2"}  # uniform reference with the equal-memory budget
 _CTX = None
 
 
@@ -87,10 +118,78 @@ class Row:
     policy: str = "none"
     k: int = 0
     per_layer: bool = False
-    shadow: bool = False  # speculative-token row; directly follows its spec / spec_chain row (same policy, k)
+    shadow: bool = False  # speculative-token row; follows its spec-family row (same policy, k), after cand - 1 others
+    m: int = 1            # spec family: number of candidates (= shadows)
+    cand: int = 0         # shadows: candidate index (0 = the argmax, the single guess of spec / spec_chain)
+    pool: int = 0         # pool policies: pool size M per (layer, KV head) (MATCH / HALF resolved per pause)
 
 
 MATCH = -1  # k resolved per pause so that base + fetched set uses the memory of uniform int(base + 1)
+HALF = -2   # pool size k_match // 2
+
+
+def spec_family(name, pol, hist, fresh, k, m=1):
+    """A spec-family row followed by its m shadows."""
+    return [Row(name, hist, fresh, policy=pol, k=k, m=m)] + \
+           [Row(f"{name}_shadow{c or ''}", hist, fresh, policy=pol, k=k, m=m, shadow=True, cand=c) for c in range(m)]
+
+
+ROW_SETS = ("default", "a1", "a2", "c")
+
+
+def study_rows(row_set, base="int1", prefill=True, uniform_refs=(2,), s2_extra_ks=()) -> list[Row]:
+    """Fetch study run 5 row sets (each job's rules are decided within that job):
+      a1  multi-guess speculation: s2, oracle, spec, spec_chain at 64/128/match (+ s2 at s2_extra_ks for the union
+          rows' size comparison); spec_union{2,3} and spec_chain_union{2,3} at 128; spec_wtd{2,3} and
+          spec_chain_wtd{2,3} at 128 and match
+      a2  pools and scoring keys: s2, oracle, s2_k2score, spec_chain at 16/64/128/match; s2_pool and spec_chain_pool
+          at 16/64/128 with M = k_match and k_match // 2
+      c   base k2v1: s2, oracle, spec_chain at 16/64/128/match; spec_chain_wtd3 at 128/match; s2_pool at 16/64/128,
+          both M; int1-base comparators s2@16, oracle@16, s2@match (prefilled over int1 with the same prefill fetch)
+    Every set has bf16, the base, the uniform references, fetch_all, noise_ctrl (and fetch_all_noprefill)."""
+    fr = "pf" if prefill else base
+    rows = [Row("bf16", "bf16", "bf16"), Row(base, base, base)]
+    rows += [Row(f"int{b}", f"int{b}", f"int{b}") for b in uniform_refs if f"int{b}" != base]
+    rows += [Row("fetch_all", base, fr, policy="all"), Row("noise_ctrl", base, "bf16", policy="all")]
+    if prefill:
+        rows.append(Row("fetch_all_noprefill", base, base, policy="all"))
+    B = base
+    if row_set == "a1":
+        for k in (64, 128, MATCH):
+            rows += [Row("s2", B, fr, policy="s2", k=k), Row("oracle", B, fr, policy="oracle", k=k)]
+            rows += spec_family("spec", "spec", B, fr, k) + spec_family("spec_chain", "spec_chain", B, fr, k)
+        rows += [Row("s2", B, fr, policy="s2", k=k) for k in s2_extra_ks]
+        for m in (2, 3):
+            rows += spec_family(f"spec_union{m}", "spec_union", B, fr, 128, m)
+            rows += spec_family(f"spec_chain_union{m}", "spec_chain_union", B, fr, 128, m)
+        for k in (128, MATCH):
+            for m in (2, 3):
+                rows += spec_family(f"spec_wtd{m}", "spec_wtd", B, fr, k, m)
+                rows += spec_family(f"spec_chain_wtd{m}", "spec_chain_wtd", B, fr, k, m)
+    elif row_set == "a2":
+        for k in (16, 64, 128, MATCH):
+            rows += [Row(p, B, fr, policy=p, k=k) for p in ("s2", "oracle", "s2_k2score")]
+            rows += spec_family("spec_chain", "spec_chain", B, fr, k)
+        for k in (16, 64, 128):
+            for M, tag in ((MATCH, "Mmatch"), (HALF, "Mhalf")):
+                rows.append(Row(f"s2_pool_{tag}", B, fr, policy="s2_pool", k=k, pool=M))
+                rows += [dataclasses.replace(r, pool=M) for r in
+                         spec_family(f"spec_chain_pool_{tag}", "spec_chain_pool", B, fr, k)]
+    elif row_set == "c":
+        for k in (16, 64, 128, MATCH):
+            rows += [Row("s2", B, fr, policy="s2", k=k), Row("oracle", B, fr, policy="oracle", k=k)]
+            rows += spec_family("spec_chain", "spec_chain", B, fr, k)
+        for k in (128, MATCH):
+            rows += spec_family("spec_chain_wtd3", "spec_chain_wtd", B, fr, k, 3)
+        for k in (16, 64, 128):
+            rows += [Row("s2_pool_Mmatch", B, fr, policy="s2_pool", k=k, pool=MATCH),
+                     Row("s2_pool_Mhalf", B, fr, policy="s2_pool", k=k, pool=HALF)]
+        f1 = "pf:int1" if prefill else "int1"
+        rows += [Row("s2_int1base", "int1", f1, policy="s2", k=16), Row("oracle_int1base", "int1", f1, policy="oracle", k=16),
+                 Row("s2_int1base", "int1", f1, policy="s2", k=MATCH)]
+    else:
+        raise ValueError(f"unknown row set {row_set!r}")
+    return rows
 
 
 def default_rows(ks=(16, 32, 64, 128, MATCH), base_bits=2, prefill=False, uniform_refs=(2, 3)) -> list[Row]:
@@ -146,21 +245,35 @@ class FetchContext:
         def ix(cond):
             return torch.tensor([i for i, r in enumerate(rows) if cond(r)], device=dev, dtype=torch.long)
 
-        # shadow i reads its spec row's generated KV and selection scores; it directly follows that row
-        self.pair = {}
+        # shadow i reads its spec row's generated KV and selection scores; a spec-family row is directly followed by
+        # its m shadows (cand 0..m-1)
+        self.pair, self.shadows = {}, {}
         for i, r in enumerate(rows):
             if r.shadow:
-                s = rows[i - 1] if i else None
-                assert s is not None and r.policy in SPEC_POLICIES and s.policy == r.policy and not s.shadow \
-                    and s.k == r.k and s.per_layer == r.per_layer and s.hist == r.hist and s.fresh == r.fresh, \
-                    "a shadow row must directly follow its spec / spec_chain row (same policy, k, per_layer)"
-                self.pair[i] = i - 1
-        self.shadow_of = {s: i for i, s in self.pair.items()}
+                j = i - 1
+                while j >= 0 and rows[j].shadow:
+                    j -= 1
+                s = rows[j] if j >= 0 else None
+                assert s is not None and r.policy in SPEC_POLICIES and s.policy == r.policy and s.k == r.k \
+                    and s.m == r.m and s.pool == r.pool and s.per_layer == r.per_layer and s.hist == r.hist \
+                    and s.fresh == r.fresh and r.cand == i - j - 1 < r.m, \
+                    "shadows must directly follow their spec-family row (same policy, k, m), cand 0..m-1 in order"
+                self.pair[i] = j
+                self.shadows.setdefault(j, []).append(i)
+        for j, sh in self.shadows.items():
+            assert len(sh) == rows[j].m, f"{rows[j].name}: {len(sh)} shadows for m = {rows[j].m}"
+        for i, r in enumerate(rows):
+            assert r.policy not in SPEC_POLICIES or r.shadow or i in self.shadows, f"{r.name} has no shadow row"
+        self.shadow_of = {s: sh[0] for s, sh in self.shadows.items()}   # the cand-0 shadow
         self.score_src = [self.pair.get(i, i) for i in range(R)]
         self.gen_src = torch.tensor(self.score_src, device=dev, dtype=torch.long)
         self.is_shadow = torch.tensor([r.shadow for r in rows], device=dev)
-        # spec shadows sit at their spec row's position: they must not see the spec row's current token
-        self.same_pos_shadow = torch.tensor([r.shadow and r.policy == "spec" for r in rows], device=dev)
+        # anchored shadows sit at their spec row's position: they must not see the spec row's current token
+        self.same_pos_shadow = torch.tensor([r.shadow and r.policy in ANCHORED for r in rows], device=dev)
+        # probability of each shadow's candidate (set by run_pause before every step; 1 at the warm-up)
+        self.cand_w = torch.ones(R, device=dev)
+        if any(r.policy == "s2_k2score" for r in rows):
+            assert "int2" in hist, "s2_k2score needs the int2 history copy (an int2 uniform reference row)"
 
         self.by_hist = {b: ix(lambda r, b=b: r.hist == b) for b in {r.hist for r in rows}}
         self.by_fresh = {g: ix(lambda r, g=g: r.fresh == g) for g in {r.fresh for r in rows}}
@@ -172,21 +285,70 @@ class FetchContext:
         self.fetch_rows = ix(lambda r: r.policy != "none")
         self.gen = [None] * n_layers
         self.prev = [dict() for _ in range(n_layers)]
-        self.err = [None] * n_layers
+        self.err = [dict() for _ in range(n_layers)]
         self.union = [None] * n_layers
+        self.pool = [dict() for _ in range(n_layers)]   # pool rows: (in-pool mask, last-selected step), (kvh, mid)
         z = lambda: torch.zeros(R, device=dev, dtype=torch.float64)
         self.st_pairs, self.st_distinct, self.st_recall, self.st_obs = z(), z(), z(), z()
+        self.st_moved, self.st_sel = z(), z()   # pairs moved (pool rows: misses only), pairs selected (pool rows)
         self.last_idx = {}
         self.diag_records = []
 
-    def errors(self, l):
+    def errors(self, l, base=None):
         """Per-layer quantities that do not depend on the query, over the middle tokens."""
-        if self.err[l] is None:
+        base = base or self.base
+        if base not in self.err[l]:
             lo, hi = self.lo, self.hi
             K16, V16 = (x[:, lo:hi].float() for x in self.hist["bf16"][l])
-            K2, V2 = (x[:, lo:hi].float() for x in self.hist[self.base][l])
-            self.err[l] = {"dk": (K16 - K2).norm(dim=-1), "dv": (V16 - V2).norm(dim=-1)}
-        return self.err[l]
+            K2, V2 = (x[:, lo:hi].float() for x in self.hist[base][l])
+            self.err[l][base] = {"dk": (K16 - K2).norm(dim=-1), "dv": (V16 - V2).norm(dim=-1)}
+        return self.err[l][base]
+
+
+def _top_from_score(score, ks, kvh):
+    """Top-k per row (k may differ per row) -> indices (n, kvh, kmax) into the middle, valid (n, kvh, kmax)."""
+    kmax = max(int(max(ks)), 1)
+    n = score.shape[0]
+    top = score.topk(kmax, dim=-1).indices.expand(n, kvh, kmax)
+    kt = torch.as_tensor(ks, device=score.device)
+    valid = (torch.arange(kmax, device=score.device)[None, None, :] < kt[:, None, None]).expand(n, kvh, kmax)
+    return top, valid
+
+
+def _top_from_mask(mask):
+    """A set per (row, KV head) given as a mask (n, kvh, mid) -> indices (n, kvh, kmax), valid (prefix per head)."""
+    kmax = max(int(mask.sum(dim=-1).max()), 1)
+    v, top = mask.float().topk(kmax, dim=-1)
+    return top, v > 0
+
+
+def _topk_mask(score, k):
+    """(..., mid) score -> mask of its top-k entries."""
+    k = min(int(k), score.shape[-1])
+    return torch.zeros_like(score, dtype=torch.bool).scatter_(-1, score.topk(k, dim=-1).indices, True)
+
+
+def _pool_update(ctx, l, i, score, k, M):
+    """Insert row i's top-k (by score, (kvh, mid)) into its pool, evict the least recently selected tokens (ties: the
+    lower current score) down to M per KV head, count misses. Returns the pool mask (kvh, mid)."""
+    if i not in ctx.pool[l]:
+        ctx.pool[l][i] = (torch.zeros_like(score, dtype=torch.bool), torch.zeros_like(score, dtype=torch.int32))
+    pool, stamp = ctx.pool[l][i]
+    sel = _topk_mask(score, k)
+    ctx.st_moved[i] += float((sel & ~pool).sum())
+    ctx.st_sel[i] += float(sel.sum())
+    stamp[sel] = ctx.t
+    pool |= sel
+    over = pool.sum(dim=-1) - M
+    if int(over.max()) > 0:
+        rel = score / score.amax(dim=-1, keepdim=True).clamp_min(1e-30)   # in [0, 1]: breaks ties within a step
+        key = torch.where(pool & ~sel, stamp.double() + 0.5 * rel.double(), torch.full_like(rel, float("inf"),
+                                                                                           dtype=torch.float64))
+        n_ev = int(over.max())
+        ev = key.topk(n_ev, dim=-1, largest=False).indices
+        ok = torch.arange(n_ev, device=score.device)[None, :] < over[:, None]
+        pool.scatter_(-1, ev, pool.gather(-1, ev) & ~ok)
+    return pool
 
 
 def fetch_attention(module, query, key, value, attention_mask, scaling, dropout=0.0, **kwargs):
@@ -228,20 +390,41 @@ def fetch_attention(module, query, key, value, attention_mask, scaling, dropout=
         """Attention probabilities over the middle history tokens, (n, kvh, G, hi - lo)."""
         return torch.cat([lhist, lt[rows]], dim=-1).softmax(dim=-1)[..., lo:hi]
 
-    def base_output(rows, fg):
-        """Attention output of `rows` with the base history and no fetch, (n, kvh, G, d)."""
+    def base_output(rows, fg, b):
+        """Attention output of `rows` with their base history `b` and no fetch, (n, kvh, G, d)."""
         p = torch.cat([lh[rows], lt[rows]], dim=-1).softmax(dim=-1)
-        out = torch.einsum("rkgp,kpd->rkgd", p[..., :P], Vf[ctx.base])
+        out = torch.einsum("rkgp,kpd->rkgd", p[..., :P], Vf[b])
         out += torch.einsum("rkgf,kfd->rkgd", p[..., P:P + F], ctx.fresh[fg][l][1].float())
         out += torch.einsum("rkgt,rktd->rkgd", p[..., P + F:P + F + t + 1], gv[src[rows], :, :t + 1].float())
         return out
 
-    # int2 (pre-fetch) probabilities of rows that score with them, before any logit is replaced
+    mid = hi - lo
+
+    def spec_combine(pol, s_, sc):
+        """Selection of spec-family row s_ from its shadows' scores sc(shadow) (kvh, mid): the cand-0 score (spec,
+        spec_chain, m = 1), the probability-weighted sum (wtd), or the union of the top-k sets (a mask)."""
+        shs = ctx.shadows[s_]
+        if pol in UNION:
+            k_ = min(ctx.rows[s_].k, mid)
+            u = _topk_mask(sc(shs[0]), k_)
+            for sh in shs[1:]:
+                u |= _topk_mask(sc(sh), k_)
+            return u
+        if pol in WTD and len(shs) > 1:
+            return sum(ctx.cand_w[sh] * sc(sh) for sh in shs)
+        return sc(shs[0])
+
+    # base (pre-fetch) probabilities of rows that score with them, before any logit is replaced
     p2 = {}
     for (pol, per_layer, base), rr in ctx.groups.items():
-        if pol in PREV_POLICIES or pol in CUR_INT2_POLICIES or pol == "spec":
+        if pol in PREV_POLICIES or pol in CUR_INT2_POLICIES or pol in ANCHORED:
             rows = torch.tensor(rr, device=dev)
             p2[(pol, per_layer, base)] = (rows, mid_probs(lh[rows], rows))
+        elif pol == "s2_k2score" and ctx.fetch:   # scored over the int2 copy's keys
+            rows = torch.tensor(rr, device=dev)
+            lk2 = torch.einsum("rkgd,kpd->rkgp", q[rows], Kf["int2"]) * scaling
+            p2[(pol, per_layer, base)] = (rows, mid_probs(lk2, rows))
+            del lk2
     l16 = None
     if ctx.fetch and len(ctx.fetch_rows):
         l16 = torch.einsum("rkgd,kpd->rkgp", q[ctx.fetch_rows], Kf["bf16"]) * scaling
@@ -250,47 +433,66 @@ def fetch_attention(module, query, key, value, attention_mask, scaling, dropout=
     selections = []
     if ctx.fetch:
         for (pol, per_layer, base), rr in ctx.groups.items():
+            key_ = (pol, per_layer, base)
             rows = torch.tensor(rr, device=dev)
             n = len(rr)
+            pos = {i: j for j, i in enumerate(rr)}
             if pol == "all":
                 top = torch.arange(lo, hi, device=dev).expand(n, kvh, -1)
-                valid = torch.ones(n, hi - lo, dtype=torch.bool, device=dev)
+                valid = torch.ones(n, kvh, mid, dtype=torch.bool, device=dev)
             else:
                 if pol in PREV_POLICIES:
                     score = torch.stack([ctx.prev[l][ctx.score_src[i]] for i in rr])
-                elif pol == "spec":  # every spec row and its shadow use the shadow's current int2 attention
-                    pr = p2[(pol, per_layer, base)][1].sum(dim=2)
-                    score = pr[[rr.index(ctx.shadow_of.get(i, i)) for i in rr]]
-                elif pol in CUR_INT2_POLICIES:
-                    pr = p2[(pol, per_layer, base)][1]
-                    if pol == "s2":
+                elif pol in ANCHORED:  # a spec row and its shadows use the shadows' current base attention
+                    pr = p2[key_][1].sum(dim=2)
+                    comb = {}
+                    for i in rr:
+                        s_ = ctx.score_src[i]
+                        if s_ not in comb:
+                            comb[s_] = spec_combine(pol, s_, lambda sh: pr[pos[sh]])
+                    score = torch.stack([comb[ctx.score_src[i]] for i in rr])
+                elif pol in CUR_INT2_POLICIES or pol == "s2_k2score":
+                    pr = p2[key_][1]
+                    if pol in ("s2", "s2_pool", "s2_k2score"):
                         score = pr.sum(dim=2)
                     elif pol == "s2sens_a":
-                        e = ctx.errors(l)
+                        e = ctx.errors(l, base)
                         qn = q[rows].norm(dim=-1)[..., None]
                         score = (pr * (e["dv"][None, :, None, :] + qn * e["dk"][None, :, None, :] * scaling)).sum(dim=2)
                     else:  # s2sens_b
                         K16m, V16m = (x[:, lo:hi].float() for x in ctx.hist["bf16"][l])
-                        K2m, V2m = (x[:, lo:hi].float() for x in ctx.hist[ctx.base][l])
+                        K2m, V2m = (x[:, lo:hi].float() for x in ctx.hist[base][l])
                         score = (pr * first_order_norm(V16m - V2m, K16m - K2m, V2m, q[rows],
-                                                       base_output(rows, ctx.rows[rr[0]].fresh), scaling)).sum(dim=2)
+                                                       base_output(rows, ctx.rows[rr[0]].fresh, base), scaling)).sum(dim=2)
                 else:  # oracle
                     score = mid_probs(l16[[pos16[i] for i in rr]], rows).sum(dim=2)
                 if per_layer:
                     score = score.sum(dim=1, keepdim=True)
-                ks = torch.tensor([min(ctx.rows[i].k, hi - lo) for i in rr], device=dev)
-                kmax = int(ks.max())
-                top = score.topk(kmax, dim=-1).indices.expand(n, kvh, kmax) + lo
-                valid = torch.arange(kmax, device=dev)[None, :] < ks[:, None]
+                if pol in POOL:   # one pool per spec / s2_pool row; its shadow attends with the same pool
+                    masks = {}
+                    for i in rr:
+                        s_ = ctx.score_src[i]
+                        if s_ not in masks:
+                            r_ = ctx.rows[s_]
+                            masks[s_] = _pool_update(ctx, l, s_, score[pos[i]], min(r_.k, mid), r_.pool)
+                    top, valid = _top_from_mask(torch.stack([masks[ctx.score_src[i]] for i in rr]))
+                elif pol in UNION:
+                    top, valid = _top_from_mask(score if score.dtype == torch.bool else score > 0)
+                else:
+                    top, valid = _top_from_score(score, [min(ctx.rows[i].k, mid) for i in rr], kvh)
+                top = top + lo
             idxG = top[:, :, None, :].expand(-1, -1, G, -1)
-            vG = valid[:, None, None, :]
+            vG = valid[:, :, None, :]
             new = torch.einsum("rkgd,rkjd->rkgj", q[rows], Kf["bf16"][hk, top]) * scaling
             sub = lh[rows]
             sub.scatter_(-1, idxG, torch.where(vG, new, sub.gather(-1, idxG)))
             lh[rows] = sub
             selections.append((pol, per_layer, base, rr, rows, top, valid, idxG, vG))
             for j, i in enumerate(rr):
-                ctx.last_idx[i] = top[j][:, valid[j]]
+                vj = valid[j]
+                # (kvh, k) when every head has the same set size, else a list of per-head index tensors (unions, pools)
+                ctx.last_idx[i] = (top[j][:, vj[0]] if bool((vj == vj[0]).all())
+                                   else [top[j][h][vj[h]] for h in range(kvh)])
 
     p = torch.cat([lh, lt], dim=-1).softmax(dim=-1)
     ph, pt = p[..., :P], p[..., P:]
@@ -309,11 +511,13 @@ def fetch_attention(module, query, key, value, attention_mask, scaling, dropout=
     for pol, per_layer, base, rr, rows, top, valid, idxG, vG in selections:
         n = len(rr)
         mask = torch.zeros(n, kvh, hi - lo, dtype=torch.bool, device=dev)
-        mask.scatter_(-1, top - lo, valid[:, None, :].expand(-1, kvh, -1))
+        mask.scatter_(-1, top - lo, valid)
         if ctx.union[l] is None:
             ctx.union[l] = torch.zeros(R, kvh, hi - lo, dtype=torch.bool, device=dev)
         ctx.union[l][rows] |= mask
         ctx.st_pairs[rows] += mask.sum(dim=(1, 2)).double()
+        if pol not in POOL:   # pool rows count their misses in _pool_update
+            ctx.st_moved[rows] += mask.sum(dim=(1, 2)).double()
         ctx.st_distinct[rows] += mask.any(dim=1).sum(dim=-1).double()
         ctx.st_obs[rows] += 1
         if pol != "all":
@@ -322,7 +526,7 @@ def fetch_attention(module, query, key, value, attention_mask, scaling, dropout=
             if per_layer:
                 s16 = s16.sum(dim=1, keepdim=True)
             otop = s16.topk(top.shape[-1], dim=-1).indices.expand(n, kvh, -1)
-            omask = torch.zeros_like(mask).scatter_(-1, otop, valid[:, None, :].expand(-1, kvh, -1))
+            omask = torch.zeros_like(mask).scatter_(-1, otop, valid)
             ctx.st_recall[rows] += ((mask & omask).sum(dim=(1, 2)) / mask.sum(dim=(1, 2)).clamp_min(1)).double()
             if ctx.diag:
                 pm2 = torch.cat([lh_pre[rows], lt[rows]], dim=-1).softmax(dim=-1)[..., lo:hi]
@@ -332,7 +536,7 @@ def fetch_attention(module, query, key, value, attention_mask, scaling, dropout=
                     if ctx.rows[i].shadow:
                         continue
                     ctx.diag_records.append({
-                        "row": i, "t": t, "layer": l, "idx": top[j][:, valid[j]].to(torch.int32).cpu(),
+                        "row": i, "t": t, "layer": l, "idx": top[j][:, valid[j].all(dim=0)].to(torch.int32).cpu(),
                         "mass_actual": mass(pma[j:j + 1], mask[j:j + 1])[0].cpu(),
                         "mass_int2": mass(pm2[j:j + 1], mask[j:j + 1])[0].cpu(),
                         "mass_bf16": mass(p16[j:j + 1], mask[j:j + 1])[0].cpu(),
@@ -342,25 +546,28 @@ def fetch_attention(module, query, key, value, attention_mask, scaling, dropout=
                         "overlap": (mask[j] & omask[j]).sum(dim=-1).cpu(),
                     })
 
-    # scores for the next step's selection (previous-step policies; shadows score for their spec row)
+    # scores for the next step's selection (previous-step policies; chained shadows score for their spec row)
     for (pol, per_layer, base), (rows, pr) in p2.items():
-        if pol in CUR_INT2_POLICIES or pol == "spec":
+        if pol in CUR_INT2_POLICIES or pol in ANCHORED or pol == "s2_k2score":
             continue
-        if pol in ("s1", "spec_chain"):
+        if pol == "s1" or pol in CHAIN:
             score = pr.sum(dim=2)
         elif pol == "sens_a":
-            e = ctx.errors(l)
+            e = ctx.errors(l, base)
             qn = q[rows].norm(dim=-1)[..., None]
             score = (pr * (e["dv"][None, :, None, :] + qn * e["dk"][None, :, None, :] * scaling)).sum(dim=2)
         else:  # sens_b
             K16m, V16m = (x[:, lo:hi].float() for x in ctx.hist["bf16"][l])
-            K2m, V2m = (x[:, lo:hi].float() for x in ctx.hist[ctx.base][l])
+            K2m, V2m = (x[:, lo:hi].float() for x in ctx.hist[base][l])
             score = (pr * first_order_norm(V16m - V2m, K16m - K2m, V2m, q[rows], o[rows], scaling)).sum(dim=2)
-        for j, i in enumerate(rows.tolist()):
-            if pol == "spec_chain":
-                if ctx.rows[i].shadow:
-                    ctx.prev[l][ctx.pair[i]] = score[j]
-            else:
+        rl = rows.tolist()
+        if pol in CHAIN:
+            pos = {i: j for j, i in enumerate(rl)}
+            for s_ in dict.fromkeys(ctx.pair[i] for i in rl if ctx.rows[i].shadow):
+                v = spec_combine(pol, s_, lambda sh: score[pos[sh]])
+                ctx.prev[l][s_] = v.float() if v.dtype == torch.bool else v
+        else:
+            for j, i in enumerate(rl):
                 ctx.prev[l][i] = score[j]
 
     return o.reshape(R, 1, H, d).to(query.dtype), None
@@ -459,38 +666,67 @@ def prefill_with_fetch(model, ids, hist_base, hist16, lo, hi, k, chunk, pos0):
     return [(torch.cat(a, dim=1), torch.cat(b, dim=1)) for a, b in zip(ctx.fk, ctx.fv)], ctx.pairs
 
 
-def estimate_peak_bytes(cfg, weight_bytes, P, F, rows, base_bits=2, max_steps=64, prefill_chunk=2048):
+def _hist_names(rows, base):
+    """History copies a row set needs (tool-output groups "pf" / "pf:<base>" prefill over a history copy)."""
+    out = {"bf16", base}
+    for r in rows:
+        out.add(r.hist)
+        for g in (r.fresh,):
+            out.add(base if g == "pf" else g[3:] if g.startswith("pf:") else g)
+    return out
+
+
+def estimate_peak_bytes(cfg, weight_bytes, P, F, rows, base_bits=2, max_steps=64, prefill_chunk=2048, base=None):
     """Rough peak GPU memory of run_pause on one pause (history P tokens, tool output F tokens), in bytes.
 
     History copies (one per precision used: bf16, base, uniform references) dominate. The peak is the larger of
     the tool-output prefill phase (copies + one more copy while DynamicCache concatenates) and the decode phase
     (copies + tool-output KV + per-layer scratch: fp32 casts of the copies, ~6 attention-probability tensors of
-    (rows, heads, P), previous-step scores, fetch bookkeeping). Adds 1.5 GB for the CUDA context / allocator.
+    (rows, heads, P), previous-step scores, fetch bookkeeping, pool state). Adds 1.5 GB for the CUDA context /
+    allocator. (Run 3/4 measured ~1.6 GB more than this on the largest pause.)
     """
     L, kvh, H = cfg.num_hidden_layers, cfg.num_key_value_heads, cfg.num_attention_heads
     d = getattr(cfg, "head_dim", None) or cfg.hidden_size // H
     tok = 2 * kvh * d * 2 * L  # bf16 K + V of one token, all layers
-    base = f"int{base_bits}"
-    bases = ({r.hist for r in rows} | {r.fresh for r in rows} | {"bf16", base}) - {"pf"}
-    copies = len(bases) * P * tok
+    base = base or f"int{base_bits}"
+    bases = _hist_names(rows, base)
+    q = bases - {"bf16"}
+    # K and V halves are stored once per bit width (k2v1 shares the int2 keys and the int1 values)
+    copies = (1 + (len({_kv_bits(b)[0] for b in q}) + len({_kv_bits(b)[1] for b in q})) / 2) * P * tok
     R = len(rows)
     n_fresh = len({r.fresh for r in rows} | {base})
     prefill_act = prefill_chunk * (cfg.hidden_size * 6 + getattr(cfg, "intermediate_size", 4 * cfg.hidden_size) * 3) * 2 \
         + prefill_chunk * H * 64 * 4
     prefill_phase = copies + P * tok + prefill_act
     n_prev = sum(r.policy in PREV_POLICIES and not r.shadow for r in rows)
+    n_k2 = sum(r.policy == "s2_k2score" for r in rows)
+    n_pool = sum(r.policy in POOL and not r.shadow for r in rows)
     scratch = (len(bases) * 2 * kvh * P * d * 4            # fp32 casts of the history copies (one layer)
-               + 6 * R * H * (P + F + max_steps) * 4)      # logits / probabilities (one layer)
-    keep = n_prev * kvh * P * 4 * L + R * kvh * P * L    # previous-step scores, union masks (all layers)
+               + (6 * R + 2 * n_k2) * H * (P + F + max_steps) * 4)   # logits / probabilities (one layer)
+    keep = n_prev * kvh * P * 4 * L + R * kvh * P * L + n_pool * kvh * P * 5 * L  # scores, union masks, pools
     gen = R * L * kvh * (max_steps + 1) * d * 2 * 2
     decode_phase = copies + n_fresh * F * tok + scratch + keep + gen
     return int(weight_bytes + max(prefill_phase, decode_phase) + 1.5e9)
 
 
+def _kv_bits(base):
+    """(key bits, value bits) of a quantized base: "intN" -> (N, N), "k2v1" -> (2, 1)."""
+    return (2, 1) if base == "k2v1" else (int(base[3:]), int(base[3:]))
+
+
+def _block_bytes(base, block, kvh, d):
+    """Bytes of one block of one layer at a base precision ("intN" or "k2v1": int2 keys + int1 values)."""
+    if base == "k2v1":
+        elems = kvh * block * d
+        return elems * 2 // 8 + elems * 1 // 8 + kvh * d * 2 * 2 + kvh * block * 2 * 2
+    return block_bytes(int(base[3:]), block, kvh, d)
+
+
 def hist_bytes(bits, P, lo, hi, block, kvh, d, n_layers):
-    """Reload bytes of the history with the middle blocks at `bits` and everything else bf16."""
+    """Reload bytes of the history with the middle blocks at `bits` (int or "k2v1") and everything else bf16."""
     mid = (hi - lo) // block
-    return (mid * block_bytes(bits, block, kvh, d) + (P - (hi - lo)) * kvh * d * 4) * n_layers
+    b = bits if isinstance(bits, str) else f"int{bits}"
+    return (mid * _block_bytes(b, block, kvh, d) + (P - (hi - lo)) * kvh * d * 4) * n_layers
 
 
 @torch.no_grad()
@@ -522,14 +758,14 @@ def generate_self_target(model, hist_ids, fresh_ids, max_new, temperature=0.0, s
 
 @torch.no_grad()
 def run_pause(model, hist_ids, fresh_ids, target_ids, rows, block=16, recent=64, max_steps=64,
-              check=False, diag=False, base_bits=2, prefill_k=0, prefill_chunk=64):
+              check=False, diag=False, base_bits=2, prefill_k=0, prefill_chunk=64, base=None):
     """Run every row on one pause. Returns per-row log-probs/argmax of the first max_steps target
     tokens, fetch statistics and byte accounting; with check=True also compares the per-step
     bf16 and base rows with sdpa teacher forcing over the same tokens (run_gate.run_turn); with
     diag=True also returns per-step, per-layer fetch records (diag_records). Rows with k = MATCH get
-    k resolved so that the base history + one step's fetched set uses uniform int(base + 1)'s memory."""
-    import dataclasses
-
+    k resolved so that the base history + one step's fetched set uses uniform int(base + 1)'s memory (per row's
+    base; NEXT); pool sizes MATCH / HALF resolve to that k_match / k_match // 2. base: "int1" / "int2" / "k2v1"
+    (default int<base_bits>)."""
     from experiments.gate.run_gate import prefill, run_turn
 
     cfg = model.config
@@ -544,14 +780,26 @@ def run_pause(model, hist_ids, fresh_ids, target_ids, rows, block=16, recent=64,
     n_recent = min(nb - 1, math.ceil(recent / block))
     lo, hi = block, (nb - n_recent) * block
     assert hi > lo, "history has no quantized middle blocks"
-    base = f"int{base_bits}"
+    base = base or f"int{base_bits}"
     pair_bytes = 2 * d * 2  # K + V of one token, one KV head, one layer, bf16
-    nbytes = {f"int{b}_bytes": hist_bytes(b, P, lo, hi, block, kvh, d, n_layers) for b in (1, 2, 3)}
+    nbytes = {f"{b}_bytes": hist_bytes(b, P, lo, hi, block, kvh, d, n_layers) for b in ("int1", "int2", "int3", "k2v1")}
     nbytes["bf16_bytes"] = P * kvh * d * 4 * n_layers
-    k_match = max(0, min(hi - lo, (nbytes[f"int{base_bits + 1}_bytes"] - nbytes[f"{base}_bytes"])
-                         // (kvh * n_layers * pair_bytes)))
+
+    def kmatch(h):
+        return max(0, min(hi - lo, (nbytes[f"{NEXT[h]}_bytes"] - nbytes[f"{h}_bytes"]) // (kvh * n_layers * pair_bytes)))
+
+    k_match = kmatch(base)
     k_label = [("match" if r.k == MATCH else str(r.k)) for r in rows]
-    rows = [dataclasses.replace(r, k=k_match) if r.k == MATCH else r for r in rows]
+    pool_label = [("match" if r.pool == MATCH else "half" if r.pool == HALF else str(r.pool)) for r in rows]
+
+    def resolve(r):
+        km = kmatch(r.hist) if (r.k == MATCH or r.pool in (MATCH, HALF)) else 0
+        k = km if r.k == MATCH else r.k
+        M = km if r.pool == MATCH else km // 2 if r.pool == HALF else r.pool
+        assert r.policy not in POOL or 0 < min(k, hi - lo) <= M, f"{r.name}: pool size {M} below k = {k}"
+        return dataclasses.replace(r, k=k, pool=M)
+
+    rows = [resolve(r) for r in rows]
 
     cache, _ = prefill(model, hist_ids)
     K16 = [layer.keys[0] for layer in cache.layers]
@@ -566,17 +814,25 @@ def run_pause(model, hist_ids, fresh_ids, target_ids, rows, block=16, recent=64,
             out.append(y)
         return out
 
-    bases = ({r.hist for r in rows} | {r.fresh for r in rows} | {"bf16", base}) - {"pf"}
     hist = {"bf16": list(zip(K16, V16))}
-    for b in sorted(bases - {"bf16"}):
-        bits = int(b[3:])
-        hist[b] = list(zip(qcopy(K16, bits, "key"), qcopy(V16, bits, "value")))
+    # quantized keys / values per bit width, shared between bases: k2v1 = the int2 copy's keys + the int1 copy's
+    # values (the same tensors, so a k2v1 base next to int1 and int2 references costs no extra copy)
+    qk, qv = {}, {}
+    for b in sorted(_hist_names(rows, base) - {"bf16"}):
+        kb, vb = _kv_bits(b)
+        if kb not in qk:
+            qk[kb] = qcopy(K16, kb, "key")
+        if vb not in qv:
+            qv[vb] = qcopy(V16, vb, "value")
+        hist[b] = list(zip(qk[kb], qv[vb]))
+    del qk, qv
 
-    fresh, prefill_pairs = {}, 0
+    fresh, prefill_pairs = {}, {}
     for g in sorted({r.fresh for r in rows} | {base}):
-        if g == "pf":
-            fresh[g], prefill_pairs = prefill_with_fetch(model, fresh_ids[:, :-2], hist[base], hist["bf16"], lo, hi,
-                                                         prefill_k, prefill_chunk, P)
+        if g == "pf" or g.startswith("pf:"):
+            hb = base if g == "pf" else g[3:]
+            fresh[g], prefill_pairs[g] = prefill_with_fetch(model, fresh_ids[:, :-2], hist[hb], hist["bf16"], lo,
+                                                            hi, prefill_k, prefill_chunk, P)
             continue
         c = DynamicCache()
         for i, (k, v) in enumerate(hist[g]):
@@ -589,9 +845,23 @@ def run_pause(model, hist_ids, fresh_ids, target_ids, rows, block=16, recent=64,
     ctx = FetchContext(rows, {b: hist[b] for b in hist}, fresh, lo, hi, n_layers, T + 1, base=base)
     ctx.diag = diag
     shadow = torch.tensor([r.shadow for r in rows], device=dev)
-    chain = torch.tensor([r.shadow and r.policy == "spec_chain" for r in rows], device=dev)  # position +1
-    same = ctx.same_pos_shadow                                                              # spec shadows
+    chain = torch.tensor([r.shadow and r.policy in CHAIN for r in rows], device=dev)  # position +1
     src = torch.tensor(ctx.score_src, device=dev)  # a shadow's spec row (others: themselves)
+    # where each shadow's candidates come from: anchored -> its spec row's prediction (given the real token);
+    # chained -> the cand-0 shadow's own output (the chain continues from candidate 0)
+    gsrc = torch.tensor([(ctx.shadow_of[ctx.pair[i]] if r.policy in CHAIN else ctx.pair[i]) if r.shadow else i
+                         for i, r in enumerate(rows)], device=dev)
+    cand = torch.tensor([r.cand for r in rows], device=dev)
+    mmax = max([r.m for r in rows if r.shadow] + [1])
+
+    def next_guess(lg):
+        """Each shadow's candidate for the next step (cand 0 = the argmax) and its probability."""
+        g = lg.argmax(dim=-1)[gsrc]
+        if mmax > 1:
+            tk = lg[gsrc].topk(mmax, dim=-1).indices
+            g = torch.where(cand == 0, g, tk.gather(1, cand[:, None].clamp_max(mmax - 1))[:, 0])
+        w = torch.softmax(lg[gsrc].float(), dim=-1).gather(1, g[:, None])[:, 0]
+        return g, w
     logp = torch.zeros(R, T, device=dev)
     pred = torch.zeros(R, T, dtype=torch.long, device=dev)
     # KL(bf16 row || row) of the next-token distribution, summed over steps (the bf16 row: bf16 history and
@@ -608,10 +878,9 @@ def run_pause(model, hist_ids, fresh_ids, target_ids, rows, block=16, recent=64,
         x = torch.where(chain, fresh_ids[0, -1], fresh_ids[0, -2])[:, None]
         pos = torch.full((R, 1), pos0, device=dev) + chain[:, None].long()
         out = model(input_ids=x, position_ids=pos, use_cache=False)
-        am = out.logits[:, -1].argmax(dim=-1)
-        # spec_chain shadows: their own output (guess of target[0], the input of step 1);
-        # spec shadows: their spec row's greedy prediction of step 0's input (the last tool-output token)
-        guess = torch.where(same, am[src], am)
+        # chained shadows: the cand-0 shadow's output (guesses of target[0], the input of step 1);
+        # anchored shadows: their spec row's prediction of step 0's input (the last tool-output token)
+        guess, w = next_guess(out.logits[:, -1])
         ctx.fetch = True
         for j in range(T):
             ctx.t = j + 1
@@ -619,6 +888,7 @@ def run_pause(model, hist_ids, fresh_ids, target_ids, rows, block=16, recent=64,
             guesses[:, j] = guess
             actual[:, j] = torch.where(chain, tgt[0, j], real)  # chain guesses the next input, spec this one
             x = torch.where(shadow, guess, real)[:, None]
+            ctx.cand_w = w
             pos = torch.full((R, 1), pos0 + 1 + j, device=dev) + chain[:, None].long()
             out = model(input_ids=x, position_ids=pos, use_cache=False)
             lg = out.logits[:, -1].float()
@@ -628,39 +898,48 @@ def run_pause(model, hist_ids, fresh_ids, target_ids, rows, block=16, recent=64,
             if ref is not None:
                 kl_sum += (lsm[ref].exp()[None] * (lsm[ref][None] - lsm)).sum(dim=-1)
             del lsm
-            # spec_chain: the shadow's output (conditioned on its own guess); spec: the spec row's greedy
+            # chained: the cand-0 shadow's output (conditioned on its own guess); anchored: the spec row's
             # prediction given the real token it just decoded
-            guess = torch.where(same, pred[src, j], pred[:, j])
+            guess, w = next_guess(lg)
     hits = (guesses == actual) & shadow[:, None]
     guess_hits = hits.float().sum(dim=1)
+    cover = {s_: hits[sh].any(dim=0).float().sum() for s_, sh in ctx.shadows.items()}   # any candidate right
 
-    res = {"P": P, "F": F_all, "T": T, "lo": lo, "hi": hi, "base_bits": base_bits, "k_match": k_match,
+    res = {"P": P, "F": F_all, "T": T, "lo": lo, "hi": hi, "base_bits": base_bits, "base": base, "k_match": k_match,
            **nbytes, "base_bytes": nbytes[f"{base}_bytes"],
            "logp": logp.cpu(), "pred": pred.cpu(), "rows": []}
     for i, r in enumerate(rows):
         obs = max(float(ctx.st_obs[i]), 1.0)
         union = sum(int(u[i].sum()) for u in ctx.union if u is not None)
         k_res = (hi - lo) if r.policy == "all" else min(r.k, hi - lo)
-        sh = next((s for s, p_ in ctx.pair.items() if p_ == i), None)
-        pf = r.fresh == "pf"
+        sh = ctx.shadow_of.get(i)
+        pool_rows = r.policy in POOL
         res["rows"].append({
-            "k": r.k, "k_label": k_label[i],
+            "k": r.k, "k_label": k_label[i], "m": r.m, "pool_M": r.pool, "pool_label": pool_label[i],
             "fetched_pairs_per_step": float(ctx.st_pairs[i]) / T,
             "distinct_tokens_per_layer_step": float(ctx.st_distinct[i]) / obs,
             "recall_vs_oracle": (float(ctx.st_recall[i]) / obs) if r.policy not in ("none", "all") else float("nan"),
-            "moved_bytes_turn": float(ctx.st_pairs[i]) * pair_bytes,
+            "moved_bytes_turn": float(ctx.st_moved[i]) * pair_bytes,
             "unique_bytes_turn": union * pair_bytes,
-            "prefill_moved_bytes": prefill_pairs * pair_bytes if pf else 0,
-            "resident_bytes": (nbytes[f"{r.hist}_bytes"] + (k_res * kvh * n_layers * pair_bytes
-                                                            if r.policy != "none" else 0)),
+            "prefill_moved_bytes": prefill_pairs.get(r.fresh, 0) * pair_bytes,
+            # resident: base + one step's fetched set (pools: M; unions: the mean fetched count per head and layer)
+            "resident_bytes": (nbytes[f"{r.hist}_bytes"]
+                               + (0 if r.policy == "none" else
+                                  min(r.pool, hi - lo) * kvh * n_layers * pair_bytes if pool_rows else
+                                  float(ctx.st_pairs[i]) / T * pair_bytes if r.policy in UNION else
+                                  k_res * kvh * n_layers * pair_bytes)),
+            "hist_bytes": nbytes[f"{r.hist}_bytes"],
+            "next_bytes": nbytes[f"{NEXT[r.hist]}_bytes"] if r.hist in NEXT else float("nan"),
+            "pool_hit_rate": (1 - float(ctx.st_moved[i]) / max(float(ctx.st_sel[i]), 1.0)) if pool_rows else float("nan"),
             "spec_guess_acc": float(guess_hits[sh]) / T if sh is not None else float("nan"),
+            "spec_cand_cover": float(cover[i]) / T if i in cover else float("nan"),
             "kl_bf16": float(kl_sum[i]) / T if ref is not None else float("nan"),
         })
-    res["guesses"] = [{"scheme": rows[s_].name, "k_label": k_label[s_], "step": j,
+    res["guesses"] = [{"scheme": rows[s_].name, "k_label": k_label[s_], "cand": rows[sh_].cand, "step": j,
                        "guess_id": int(g_), "actual_id": int(a_), "match": int(g_ == a_)}
                       for sh_, s_ in ctx.pair.items()
                       for j, (g_, a_) in enumerate(zip(guesses[sh_].tolist(), actual[sh_].tolist()))]
-    res["last_idx"] = {i: v.cpu() for i, v in ctx.last_idx.items()}
+    res["last_idx"] = {i: (v.cpu() if torch.is_tensor(v) else [x.cpu() for x in v]) for i, v in ctx.last_idx.items()}
     if diag:
         res["diag_records"] = ctx.diag_records
 

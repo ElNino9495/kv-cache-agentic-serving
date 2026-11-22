@@ -1,11 +1,13 @@
-# Runbook: per-step fetch study (runs 2 to 4)
+# Runbook: per-step fetch study (runs 2 to 5)
 
 > **Status (22 Nov 2026).** Run 2 is done: it ran on 2 × A100 80 GB with this runbook, and the results are
 > committed (`kv_manager/results/gate_fetch/llama-3.1-8b-instruct-base2/` and `-base1/`). Run 3 runs on the
 > project's Slurm cluster (`experiments/gate/greatlakes_fetch.sbatch`), not with this runbook; it is done
 > (`-base2-pf128/`, `-base1-pf128/`). Run 4 (base 1: prefill fetch 512, and self-written targets at temperature
-> 0 and 0.7) also ran there and is done (`-base1-pf512/`, `-base1-pf128-self-T0/`, `-base1-pf128-self-T0.7/`). Part B still works for repeating a run on another Linux machine. It now also runs
-> run 3's corrected speculative-token rows, but without prefill fetch or self-written targets.
+> 0 and 0.7) also ran there and is done (`-base1-pf512/`, `-base1-pf128-self-T0/`, `-base1-pf128-self-T0.7/`).
+> Run 5 (multi-guess speculation, fetch pools, a k2v1 base; five jobs) is ready for the Slurm cluster. Part B still
+> works for repeating a run on another Linux machine. It now also runs run 3's corrected speculative-token rows,
+> but without prefill fetch, self-written targets or the run-5 row sets.
 
 For someone running the next experiment on their own Linux machine with NVIDIA A100s or RTX A6000s (a shared
 server is fine), who knows the project up
@@ -84,6 +86,32 @@ the KL from the bf16 model reported next to ΔNLL.
   The speculative token guesses right 98% / 89% of the time there (82% on the recorded messages).
 - **Cost:** fetching at equal memory moves about 6 GB per turn (about 600 MB of distinct tokens), against 2-bit's
   one-time extra reload of 139 MB. No uniform 3-bit row was run, so 1-bit + fetch vs. 3-bit is untested.
+
+**Run 5 (Slurm cluster, five jobs, rules fixed before the run)** asks whether cheaper or sharper selection keeps
+1-bit + fetch's win: several guesses of the next token instead of one (R1), 2-bit keys for scoring (R2), and a bf16
+pool that keeps fetched tokens across steps so only new ones move (R3, R4). The rules and how each is tested are in
+every run-5 job's `summary.md`; `rules_run5_<id>.md` has the overall verdicts.
+
+**Great Lakes: one-time cleanup before the next `git pull`.** Run 4's jobs wrote their result folders into the
+checkout, and those folders are now committed, so `git pull` refuses to overwrite them. Jobs now write to the
+git-ignored `results/cluster/` instead, so this is needed once. Run each line on its own (a folder that is already
+gone only makes its own `mv` fail):
+
+```bash
+cd ~/kv-cache-agentic-serving/kv_manager
+mkdir -p results/cluster/old/gate_fetch results/cluster/old/gate_fetch_smoke
+mv results/gate_fetch/llama-3.1-8b-instruct-base1-pf512 results/cluster/old/gate_fetch/
+mv results/gate_fetch/llama-3.1-8b-instruct-base1-pf128-self-T0 results/cluster/old/gate_fetch/
+mv results/gate_fetch/llama-3.1-8b-instruct-base1-pf128-self-T0.7 results/cluster/old/gate_fetch/
+mv results/gate_fetch_smoke/llama-3.1-8b-instruct-base1-pf512 results/cluster/old/gate_fetch_smoke/
+mv results/gate_fetch_smoke/llama-3.1-8b-instruct-base1-pf128-self-T0 results/cluster/old/gate_fetch_smoke/
+mv results/gate_fetch_smoke/llama-3.1-8b-instruct-base1-pf128-self-T0.7 results/cluster/old/gate_fetch_smoke/
+git status --short
+git pull
+```
+
+`git status --short` should list nothing under `results/gate_fetch/` before the pull. Run 4's Slurm logs in
+`kv_manager/` are git-ignored now and can stay.
 
 **Why it matters.** These runs decide how the project's final system reloads KV after a tool call: either plain
 uniform low-bit reload (already built), or a per-step fetch path, which is worth building only if it beats uniform

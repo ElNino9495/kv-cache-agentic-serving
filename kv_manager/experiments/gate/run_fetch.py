@@ -52,6 +52,13 @@ with the compressed row's greedy prediction, so their guess accuracy reflects th
 Every row also records kl_bf16: KL(bf16 row || row) of the next-token distribution, averaged over the steps
 (on self-written text dNLL depends on which tokens were sampled; the KL does not).
 
+Run 5 row sets (--rows a1 | a2 | c, fetch_attn.study_rows; default = the run 2-4 rows): a1 multi-guess speculation
+(spec / spec_chain with the top-m candidates: *_union{m}, *_wtd{m}), a2 fetch pools (s2_pool, spec_chain_pool with
+M = k_match and k_match // 2) and s2_k2score, c the k2v1 base (--base k2v1: int2 keys, int1 values) with int1-base
+comparators. --s2-extra-ks adds s2 rows at more ks (a1: 256 384, the union rows' size comparison). The folder name
+gets "-<row set>" for a1/a2/c; metrics.csv records the row set, the base, m, the pool size and hit rate and the
+candidate coverage.
+
 Outputs (in --out-dir, default results/gate_fetch/<model>-base<b>[-pf<K>][-self-T<T>]/): metrics.csv (pause x
 row), samples.csv, spec_guesses.csv (pause x spec row x step: guessed token, the token it stood for, match),
 self_targets.jsonl (self targets only).
@@ -66,6 +73,7 @@ self_targets.jsonl (self targets only).
 
 import argparse
 import csv
+import dataclasses
 import json
 import zlib
 from pathlib import Path
@@ -73,8 +81,8 @@ from pathlib import Path
 import torch
 
 from experiments.gate import data
-from experiments.gate.fetch_attn import (MATCH, default_rows, diagnostic_rows, estimate_peak_bytes,
-                                        generate_self_target, run_pause)
+from experiments.gate.fetch_attn import (MATCH, ROW_SETS, Row, default_rows, diagnostic_rows, estimate_peak_bytes,
+                                        generate_self_target, run_pause, spec_family, study_rows)
 from experiments.gate.run_gate import ROOT, _append, load_model, model_slug, read_pauses
 
 DIAG_DEFAULT = "pydata__xarray-4687:85"
@@ -84,14 +92,14 @@ GB = 1e9
 def memory_report(cfg, weight_bytes, rows, samples, args, card_bytes):
     """Print the estimated peak GPU memory (largest pause) and warn if it exceeds the card. Returns it."""
     est = {(i, s["turn"]): estimate_peak_bytes(cfg, weight_bytes, len(s["hist_ids"]), len(s["fresh_ids"]), rows,
-                                               base_bits=args.base_bits, max_steps=args.max_steps)
+                                               base_bits=args.base_bits, max_steps=args.max_steps, base=args.base)
            for i, s in samples}
     if not est:
         return 0
     worst = max(est, key=est.get)
     peak = est[worst]
     hist_len = next(len(s["hist_ids"]) for i, s in samples if (i, s["turn"]) == worst)
-    msg = (f"estimated peak GPU memory {peak / GB:.1f} GB ({len(rows)} rows, base int{args.base_bits}, "
+    msg = (f"estimated peak GPU memory {peak / GB:.1f} GB ({len(rows)} rows, base {args.base}, "
            f"largest pause {worst[0]} t{worst[1]} with {hist_len} history tokens)")
     if card_bytes:
         msg += f"; card {card_bytes / GB:.1f} GB"
@@ -152,6 +160,27 @@ def eos_ids_for(model, tok, fmt) -> list[int]:
     e = getattr(model.generation_config, "eos_token_id", None)
     ids |= set(e if isinstance(e, (list, tuple)) else [e] if e is not None else [])
     return sorted(ids)
+
+
+CHECK_PAIRS = (("spec_union1@128", "spec@128"), ("spec_chain_wtd1@128", "spec_chain@128"),
+               ("s2_pool_kM@match", "s2@match"))
+
+
+def check_rows(rows, base, fresh):
+    """Smoke-check rows (--check-rows): one-candidate union / weighted rows and a pool with k = M = k_match, which must
+    reproduce spec@128, spec_chain@128 and s2@match; the rows they are compared with are added if missing."""
+    have = {_label(r) for r in rows if not r.shadow}
+    add = []
+    if "spec@128" not in have:
+        add += spec_family("spec", "spec", base, fresh, 128)
+    if "spec_chain@128" not in have:
+        add += spec_family("spec_chain", "spec_chain", base, fresh, 128)
+    if "s2@match" not in have:
+        add.append(Row("s2", base, fresh, policy="s2", k=MATCH))
+    add += spec_family("spec_union1", "spec_union", base, fresh, 128, 1)
+    add += spec_family("spec_chain_wtd1", "spec_chain_wtd", base, fresh, 128, 1)
+    add.append(Row("s2_pool_kM", base, fresh, policy="s2_pool", k=MATCH, pool=MATCH))
+    return rows + add
 
 
 def _label(r):
@@ -244,6 +273,13 @@ def main():
     p.add_argument("--ks", nargs="*", default=["16", "32", "64", "128", "match"],
                    help='fetched tokens per KV head and layer; "match" = equal memory to uniform int(base + 1)')
     p.add_argument("--base-bits", type=int, default=2, choices=[1, 2])
+    p.add_argument("--base", default=None, choices=["int1", "int2", "k2v1"],
+                   help="history base (default int<--base-bits>; k2v1 = int2 keys + int1 values)")
+    p.add_argument("--rows", default="default", choices=ROW_SETS, help="row set (run 5: a1, a2, c; see above)")
+    p.add_argument("--s2-extra-ks", nargs="*", type=int, default=[], help="row sets a1/a2/c: extra s2 rows at these ks")
+    p.add_argument("--check-rows", action="store_true",
+                   help="smoke check: add spec_union1@128, spec_chain_wtd1@128 and s2_pool with k = M = k_match and "
+                        "record their largest log-prob difference from spec@128, spec_chain@128 and s2@match")
     p.add_argument("--prefill-fetch-k", type=int, default=0,
                    help="fetch this many history tokens per KV head and layer per chunk during the tool-output "
                         "prefill (0 = plain prefill over the base history)")
@@ -279,11 +315,20 @@ def main():
     self_tgt = args.target_source == "self"
     if args.temperature < 0 or (args.temperature and not self_tgt):
         p.error("--temperature needs --target-source self and must be >= 0")
-    run_name = (model_slug(args.target) + f"-base{args.base_bits}"
+    if args.base is None:
+        args.base = f"int{args.base_bits}"
+    elif args.base != "k2v1":
+        args.base_bits = int(args.base[3:])
+    if args.base == "k2v1":
+        args.base_bits = 1   # the base whose uniform reference (int2) is the equal-memory budget, as for int1
+    if args.base == "k2v1" and args.rows == "default":
+        p.error("--base k2v1 needs a run-5 row set (--rows c)")
+    run_name = (model_slug(args.target) + f"-base{args.base[3:] if args.base != 'k2v1' else 'k2v1'}"
                 + (f"-pf{args.prefill_fetch_k}" if args.prefill_fetch_k else "")
-                + (f"-self-T{args.temperature:g}" if self_tgt else ""))
+                + (f"-self-T{args.temperature:g}" if self_tgt else "")
+                + (f"-{args.rows}" if args.rows != "default" else ""))
     out_dir = Path(args.out_dir or ROOT / "results" / "gate_fetch" / run_name)
-    base = f"int{args.base_bits}"
+    base = args.base
     pf = args.prefill_fetch_k > 0
     out_dir.mkdir(parents=True, exist_ok=True)
     metrics_path, samples_path = out_dir / "metrics.csv", out_dir / "samples.csv"
@@ -313,9 +358,18 @@ def main():
 
     dev = args.device
     pauses = {diag[0]: [diag[1]]} if diag else read_pauses(Path(args.samples_from))
-    rows_for = lambda: (diagnostic_rows(base_bits=args.base_bits, prefill=pf) if diag
-                        else default_rows(_ks(args.ks), base_bits=args.base_bits, prefill=pf,
-                                          uniform_refs=args.uniform_refs))
+    def rows_for():
+        if diag:
+            rows = diagnostic_rows(base_bits=args.base_bits, prefill=pf)
+            if base == "k2v1":   # the same diagnostic rows on the k2v1 base
+                sub = lambda x: "k2v1" if x == "int1" else x
+                rows = [dataclasses.replace(r, name=sub(r.name), hist=sub(r.hist), fresh=sub(r.fresh)) for r in rows]
+            return rows
+        if args.rows == "default":
+            return default_rows(_ks(args.ks), base_bits=args.base_bits, prefill=pf, uniform_refs=args.uniform_refs)
+        rows = study_rows(args.rows, base=base, prefill=pf, uniform_refs=args.uniform_refs,
+                          s2_extra_ks=args.s2_extra_ks)
+        return check_rows(rows, base, "pf" if pf else base) if args.check_rows else rows
     card = torch.cuda.get_device_properties(0).total_memory if torch.cuda.is_available() else 0
 
     def load_samples(tok, fmt, max_ctx):
@@ -373,7 +427,7 @@ def main():
         if (instance_id, s["turn"]) in done:
             continue
         est = estimate_peak_bytes(model.config, weight_bytes, len(s["hist_ids"]), len(s["fresh_ids"]), rows,
-                                  base_bits=args.base_bits, max_steps=args.max_steps)
+                                  base_bits=args.base_bits, max_steps=args.max_steps, base=base)
         if torch.cuda.is_available():
             torch.cuda.reset_peak_memory_stats()
         ids = lambda x: torch.tensor([x], device=dev)
@@ -384,7 +438,8 @@ def main():
             t0.record()
         res = run_pause(model, hist, fresh, tgt, rows, block=args.block, recent=args.recent,
                         max_steps=args.max_steps, check=diag is None, diag=diag is not None,
-                        base_bits=args.base_bits, prefill_k=args.prefill_fetch_k, prefill_chunk=args.prefill_chunk)
+                        base_bits=args.base_bits, prefill_k=args.prefill_fetch_k, prefill_chunk=args.prefill_chunk,
+                        base=base)
         secs = None
         if t0:
             t1.record()
@@ -403,13 +458,14 @@ def main():
                 continue
             out.append({"instance_id": instance_id, "turn": s["turn"], "hist_len": res["P"],
                         "fresh_len": res["F"], "steps": res["T"], "scheme": r.name, "policy": r.policy,
-                        "per_layer": int(r.per_layer), "base_bits": args.base_bits,
+                        "per_layer": int(r.per_layer), "base_bits": args.base_bits, "base": base, "hist": r.hist,
+                        "row_set": args.rows,
                         "prefill_fetch_k": args.prefill_fetch_k, "tool_prefill": r.fresh,
                         "target_source": args.target_source, "temperature": args.temperature,
                         "delta_nll": float(-res["logp"][i].mean()) - ref_nll,
                         "top1_agree": float((res["pred"][i] == res["pred"][ref]).float().mean()),
                         **res["rows"][i], **{b: res[b] for b in ("bf16_bytes", "base_bytes", "int1_bytes",
-                                                                   "int2_bytes", "int3_bytes")}})
+                                                                   "int2_bytes", "int3_bytes", "k2v1_bytes")}})
         _append(metrics_path, out)
         tokstr = lambda i: tok.decode([i])
         _append(guesses_path, [{"instance_id": instance_id, "turn": s["turn"], **g,
@@ -419,9 +475,16 @@ def main():
         nll_diff = max(abs(chk[f"check_{n}_nll_perstep"] - chk[f"check_{n}_nll_batched"])
                        for n in ("bf16", "base"))
         chk["check_max_nll_diff"] = nll_diff
+        if args.check_rows:
+            lab = [_label(r) if not r.shadow else None for r in rows]
+            for a, b in CHECK_PAIRS:
+                if a in lab and b in lab:
+                    chk[f"check_{a.split('@')[0]}_max_dlogp"] = float(
+                        (res["logp"][lab.index(a)] - res["logp"][lab.index(b)]).abs().max())
         _append(samples_path, [{"instance_id": instance_id, "turn": s["turn"], "hist_len": res["P"],
                                 "fresh_len": res["F"], "steps": res["T"], "ref_nll": ref_nll,
-                                "seconds": secs, "model": args.target, "base_bits": args.base_bits,
+                                "seconds": secs, "model": args.target, "base_bits": args.base_bits, "base": base,
+                                "row_set": args.rows,
                                 "prefill_fetch_k": args.prefill_fetch_k, "k_match": res["k_match"],
                                 "target_source": args.target_source, "temperature": args.temperature,
                                 "seed": args.seed if self_tgt else "", "target_len": len(s["target_ids"]),
@@ -432,13 +495,16 @@ def main():
         by = {o["scheme"] + (f"@{o['k_label']}" if o["k_label"] != "0" else ""): o["delta_nll"] for o in out}
         print(f"{instance_id} turn {s['turn']}: hist {res['P']}, {res['T']} steps"
               + (f", {secs:.1f} s" if secs else "")
-              + " | " + " ".join(f"{n} {by[n]:+.4f}" for n in ("int1", "int2", "int3", "fetch_all") if n in by)
+              + " | " + " ".join(f"{n} {by[n]:+.4f}" for n in ("k2v1", "int1", "int2", "int3", "fetch_all") if n in by)
               + " | " + " ".join(f"{n} {by[n]:+.4f}" for n in
-                                 [f"{p_}@{k_}" for k_ in ("64", "match")
-                                  for p_ in ("s1", "s2", "spec", "spec_chain", "s2sens_b", "oracle")] if n in by)
+                                 [f"{p_}@{k_}" for k_ in (("64", "match") if args.rows == "default"
+                                                         else ("16", "64", "128", "match"))
+                                  for p_ in ("s1", "s2", "spec", "spec_chain", "s2sens_b", "oracle", "spec_chain_wtd3",
+                                             "s2_pool_Mmatch", "s2_pool_Mhalf", "s2_int1base")] if n in by)
               + f" | k_match {res['k_match']} | check NLL diff {nll_diff:.2e}, max|dlogp| bf16 "
               f"{chk.get('check_bf16_max_abs_logp', float('nan')):.2e} {base} "
-              f"{chk.get('check_base_max_abs_logp', float('nan')):.2e}", flush=True)
+              f"{chk.get('check_base_max_abs_logp', float('nan')):.2e}"
+              + "".join(f" | {k_[6:]} {v:.2e}" for k_, v in chk.items() if k_.endswith("_max_dlogp")), flush=True)
         if args.check_nll_tol and nll_diff > args.check_nll_tol:
             raise SystemExit(f"per-step vs sdpa NLL check failed: {nll_diff:.3e} > {args.check_nll_tol}")
         del hist, fresh, tgt, res

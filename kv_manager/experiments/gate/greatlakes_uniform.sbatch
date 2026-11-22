@@ -4,9 +4,9 @@
 # One-time setup on the login node (same venv as greatlakes.sbatch), models pre-downloaded:
 #   huggingface-cli download unsloth/Llama-3.2-3B-Instruct
 #   huggingface-cli download Qwen/Qwen3-8B
-#   cd ~/kv_manager && python -m experiments.gate.data          # recordings, if not already there
+#   cd ~/kv-cache-agentic-serving/kv_manager && python -m experiments.gate.data          # recordings, if not already there
 # Set ACCOUNT (first line after the #SBATCH block below, or in the environment) to your own Slurm account:
-#   cd ~/kv_manager && ACCOUNT=<your_account> bash experiments/gate/greatlakes_uniform.sbatch    # submits itself
+#   cd ~/kv-cache-agentic-serving/kv_manager && ACCOUNT=<your_account> bash experiments/gate/greatlakes_uniform.sbatch    # submits itself
 # Needs results/gate/samples.csv from the first gate run (in the repo).
 # Resume after a timeout: ACCOUNT=<your_account> bash experiments/gate/greatlakes_uniform.sbatch --resume
 # (`sbatch --account=<your_account> experiments/gate/greatlakes_uniform.sbatch` works too.)

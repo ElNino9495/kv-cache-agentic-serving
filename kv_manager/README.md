@@ -120,9 +120,13 @@ CUDA_VISIBLE_DEVICES=0 python -m experiments.gate.run_fetch                 # re
 CUDA_VISIBLE_DEVICES=0 python -m experiments.gate.run_fetch --base-bits 1   # results/gate_fetch/<model>-base1/
 CUDA_VISIBLE_DEVICES=0 python -m experiments.gate.run_fetch --diagnose      # per-step fetch logs, xarray t85
 python -m experiments.gate.summarize_fetch --dir results/gate_fetch/<model>-base1   # CIs, equal memory, bytes
+# run 5 row sets: --rows a1 (multi-guess spec), a2 (fetch pools, s2_k2score), c (--base k2v1: int2 keys + int1
+# values, with int1-base comparators); --check-rows adds the m = 1 / k = M rows that must reproduce spec,
+# spec_chain and s2@match; summarize_fetch --rules <run-5 folders> writes the R1-R4 verdicts (rules_run5.md)
 # Great Lakes: ACCOUNT=<your_account> bash experiments/gate/greatlakes_fetch.sbatch
-#              one A40 job per JOBS entry BASE:PREFILL_K[:self:T] (default, run 4: "1:512 1:128:self:0
-#              1:128:self:0.7"; run 3 was "2:128 1:128"), each with its own run id; base 1 without int3, joined
+#              one A40 job per JOBS entry BASE:PREFILL_K[:self:T][:rows=SET] (default, run 5: "1:128:rows=a1
+#              1:128:rows=a2 1:128:self:0.7:rows=a1 1:128:self:0.7:rows=a2 k2v1:128:rows=c"; run 4 was "1:512
+#              1:128:self:0 1:128:self:0.7", run 3 "2:128 1:128"), each with its own run id; base 1 without int3, joined
 #              from a base-2 job with the same prefill k and targets in the same submission, if any. The submit
 #              prints each job's resume command (RESUME=1 RUN_ID=<job's id> JOBS="<entry>"). Output goes to the
 #              git-ignored results/cluster/ (so git pull never conflicts); copy results/cluster/*.tgz home and

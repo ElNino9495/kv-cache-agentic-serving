@@ -145,13 +145,28 @@ saved in `self_targets.jsonl`; `kl_bf16` = KL(bf16 row || row), mean over steps.
 - Noise: self-target noise_ctrl s.d. 0.0124 / 0.0122 (2x real), mean +0.0045 / +0.0051 (CI above 0); KL is cleaner.
 - Cost unchanged: @match moves 5.7-6.1 GB/turn (42-43x int2's extra reload), ~600 MB unique (4.5x).
 
+### Next run: fetch study run 5 (code ready, not run yet)
+
+Five Great Lakes A40 jobs (`greatlakes_fetch.sbatch` default JOBS), each deciding its rules within one batch:
+A1 `1:128:rows=a1` and B1 `1:128:self:0.7:rows=a1` (multi-guess spec: `spec[_chain]_union{2,3}@128`,
+`spec[_chain]_wtd{2,3}@128/match`, baselines s2/oracle/spec/spec_chain @64/128/match, s2@256/384 for the union size
+comparison); A2 `1:128:rows=a2` and B2 `1:128:self:0.7:rows=a2` (`s2_pool`/`spec_chain_pool` @16/64/128 with
+M = k_match and k_match//2, `s2_k2score`, baselines @16/64/128/match); C `k2v1:128:rows=c` (base k2v1 = int2 keys +
+int1 values, s2/oracle/spec_chain/spec_chain_wtd3/s2_pool, int1-base comparators `s2_int1base@16/match`,
+`oracle_int1base@16`). B jobs reuse run 4's T=0.7 `self_targets.jsonl`. Pre-registered rules R1-R4 (verbatim, with
+the exact tests, in every run-5 `summary.md`; `summarize_fetch --rules` writes `rules_run5_<id>.md`, run by the last
+job): R1 wtd3 vs spec_chain @128 (A1+B1); R2 k2v1 vs int1 scoring gap and @match (C); R3 s2_pool_Mmatch@64/128 vs
+s2@match, CI upper < 2 s.d. noise and ≤ 2x int2's extra reload moved (A2; B2 for information); R4
+s2_pool_Mhalf@64 vs int2, CI upper < +0.01 and ≤ 2x moved (A2+B2). Union rows are diagnostic only. Estimated peaks
+36.1-36.6 GB (k2v1 shares the int2 keys / int1 values tensors); ~40-65 min per job; 4 h limit. CPU checks only.
+
 ## GPU situation
 
 - Great Lakes (UMich, Slurm, partition spgpu): A40 48 GB (~47.5 GB usable). Ran the gate, the uniform-only gate and
-  the first fetch run and fetch runs 3 and 4. All three `greatlakes*.sbatch` files take the Slurm
+  the first fetch run and fetch runs 3 and 4; next: fetch run 5. Checkout: `~/kv-cache-agentic-serving/kv_manager`. All three `greatlakes*.sbatch` files take the Slurm
   account from `ACCOUNT=<your_account>` and submit themselves; no account is hard-coded. `greatlakes_fetch.sbatch` submits one
-  job per `JOBS` entry `BASE:PREFILL_K[:self:T]` (default run 4: "1:512 1:128:self:0 1:128:self:0.7"; run 3 was
-  "2:128 1:128"), each with its own run id `<stamp>-<job>` (e.g. `-b1-pf128-self-T0.7`) and folder; 3 h limit,
+  job per `JOBS` entry `BASE:PREFILL_K[:self:T][:rows=SET]` (BASE 1 / 2 / k2v1; default = run 5's five jobs; run 4
+  was "1:512 1:128:self:0 1:128:self:0.7", run 3 "2:128 1:128"), each with its own run id `<stamp>-<job>` (e.g. `-b1-pf128-self-T0.7`) and folder; 3 h limit,
   ~39 GB peak; run 3 took ~43 min per job. It prints each job's resume command (`RESUME=1 RUN_ID=<job's id>
   JOBS="<entry>"`). A base-1 job joins int3 only from a base-2 job with the same prefill k and targets in the same
   submission (run ids checked). Jobs write to the git-ignored `RESULTS_ROOT` (default `results/cluster/`: gate_fetch/,
@@ -198,6 +213,8 @@ saved in `self_targets.jsonl`; `kl_bf16` = KL(bf16 row || row), mean over steps.
 | `gate_fetch/<model>-base<b>[-pf<K>][-self-T<T>]/` | fetch runs 2+ (base 2 / base 1, optional prefill fetch, optional self-written targets): metrics.csv (kl_bf16 from run 4), samples.csv, summary.md, spec_guesses.csv (run 3+), self_targets.jsonl (self targets), run_id.txt (Great Lakes); `diag_<instance>_t<turn>/` inside for `--diagnose` (fetch_idx.pt is git-ignored) |
 | `gate_fetch/llama-3.1-8b-instruct-base{2,1}-pf128/`, `fetch_logs_run3/` | fetch run 3 (A40, prefill fetch 128) and its Slurm logs |
 | `gate_fetch/llama-3.1-8b-instruct-base1-{pf512,pf128-self-T0,pf128-self-T0.7}/`, `fetch_logs_run4/` | fetch run 4 (A40, base 1: prefill fetch 512; self targets T=0 / 0.7) and its Slurm logs |
+| `gate_fetch/<model>-base{1,k2v1}-pf128[-self-T0.7]-{a1,a2,c}/`, `rules_run5_<id>.md`, `fetch_logs_<run id>/` | fetch run 5 (not run yet): row sets a1/a2/c, overall R1-R4 verdicts, logs (unpacked from `results/cluster/*.tgz`) |
+| `results/cluster/` (git-ignored) | where cluster jobs write (`RESULTS_ROOT`); unpack a `.tgz` with `tar xzf <tgz> -C results/` |
 | `gate_fetch/llama-3.1-8b-instruct-base{2,1}/`, `fetch_logs/` | fetch run 2 (2x A100 80 GB, no prefill fetch) and its logs + environment report |
 | `gate_fetch_smoke/<name>/`, `gate_smoke/` | one-pause smoke checks |
 | `gate_fetch/.status-*` | CloudLab / local / Great Lakes completion markers (git-ignored) |
@@ -215,6 +232,7 @@ The fetch results were first committed under the repo-root `results/gate_fetch/`
 | Per-step fetch study v1 (int2 base) | Done: nothing beats uniform int3 |
 | Per-step fetch study run 2 (spec, base 1, equal memory, diagnostics; no prefill fetch) | Done (2x A100 80 GB): nothing beats uniform int(b+1) at equal memory |
 | Per-step fetch study run 3 (prefill fetch 128, anchored spec + spec_chain, guess log) | Done (A40): base 2 ties int3; base 1 beats int2 on the mean, not significantly |
+| Per-step fetch study run 5 (multi-guess spec, fetch pools, s2_k2score, k2v1 base; rules R1-R4) | Built and CPU-tested; five Great Lakes A40 jobs |
 | Per-step fetch study run 4 (base 1: prefill fetch 512; self-written targets T=0 / 0.7; KL) | Done (A40): s2@match beats int2 at equal memory, CI below 0, in all three jobs; ~42x the bytes moved |
 | M1: connector with uniform reload | Built, unit tests pass on CPU, never run on a GPU |
 | M2: draft scoring inside the connector | Skipped (gate NO-GO) |
@@ -242,7 +260,7 @@ main); push `fetch-study` to both.
 
 ## Commands
 
-- Tests: `cd kv_manager && python -m pytest tests -q` (CPU, ~15 s; 80 tests, the connector import test
+- Tests: `cd kv_manager && python -m pytest tests -q` (CPU, ~15 s; 93 tests, the connector import test
   needs vLLM installed)
 - Environment: `bash kv_manager/envt/setup_env.sh` (Python 3.12, vLLM 0.27.1, pinned in
   `kv_manager/envt/requirements.lock.txt`). GPU runs of the gate/fetch study only need torch +

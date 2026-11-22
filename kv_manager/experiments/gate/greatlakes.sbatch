@@ -2,7 +2,7 @@
 # Gate experiment on UMich Great Lakes (A40 48 GB on spgpu; needs ~30 GB GPU memory).
 # One-time setup on the login node: venv at ~/gate-venv + models pre-downloaded (HF_HUB_OFFLINE=1).
 # Set ACCOUNT (first line after the #SBATCH block below, or in the environment) to your own Slurm account:
-#   cd ~/kv_manager && ACCOUNT=<your_account> bash experiments/gate/greatlakes.sbatch            # submits itself
+#   cd ~/kv-cache-agentic-serving/kv_manager && ACCOUNT=<your_account> bash experiments/gate/greatlakes.sbatch            # submits itself
 #   resume after a timeout:  ACCOUNT=<your_account> bash experiments/gate/greatlakes.sbatch --resume
 # (`sbatch --account=<your_account> experiments/gate/greatlakes.sbatch` works too.)
 #SBATCH --job-name=kv-gate
