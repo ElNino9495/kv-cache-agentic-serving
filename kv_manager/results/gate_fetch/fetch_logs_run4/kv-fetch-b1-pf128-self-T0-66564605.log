@@ -1,0 +1,301 @@
+name, memory.total [MiB], driver_version
+NVIDIA A40, 46068 MiB, 595.71.05
+>> run 20261121-154503-b1-pf128-self-T0 (1:128:self:0): base int1, prefill fetch k 128, self targets T=0 seed 0, on gl1507.arc-ts.umich.edu: results/gate_fetch/llama-3.1-8b-instruct-base1-pf128-self-T0 (Sat Nov 21 16:31:55 EST 2026)
+loading unsloth/Llama-3.1-8B-Instruct
+Loading weights:   0%|          | 0/291 [00:00<?, ?it/s]Loading weights: 100%|██████████| 291/291 [00:00<00:00, 9296.89it/s]
+66 rows on base int1, prefill fetch k=128: bf16, fetch_all, fetch_all_noprefill, int1, int2, noise_ctrl, oracle, s1, s1_layer, s2, s2sens_a, s2sens_b, sens_a, sens_b, spec, spec_chain, spec_chain_shadow, spec_shadow; ks ['16', '32', '64', '128', 'match']
+estimated peak GPU memory 22.5 GB (66 rows, base int1, largest pause sphinx-doc__sphinx-8548 t23 with 8523 history tokens); card 47.7 GB
+self targets: bf16 model, temperature 0, seed 0, up to 64 tokens, eos [128001, 128008, 128009]; 0 saved in results/gate_fetch_smoke/llama-3.1-8b-instruct-base1-pf128-self-T0/self_targets.jsonl, 1 to generate
+[transformers] Ignoring clean_up_tokenization_spaces=True for BPE tokenizer TokenizersBackend. The clean_up_tokenization post-processing step is designed for WordPiece tokenizers and is destructive for BPE (it strips spaces before punctuation). Set clean_up_tokenization_spaces=False to suppress this warning, or set clean_up_tokenization_spaces_for_bpe_even_though_it_will_corrupt_output=True to force cleanup anyway.
+self targets: 51-51 tokens (mean 51.0)
+sphinx-doc__sphinx-8548 turn 23: hist 8523, 51 steps, 58.9 s | int1 +0.4107 int2 +0.0193 fetch_all -0.0112 | s1@64 +0.2123 s2@64 +0.0006 spec@64 +0.0006 spec_chain@64 +0.0870 s2sens_b@64 -0.0015 oracle@64 -0.0086 s1@match +0.0255 s2@match -0.0082 spec@match -0.0073 spec_chain@match -0.0137 s2sens_b@match -0.0075 oracle@match -0.0101 | k_match 527 | check NLL diff 3.98e-03, max|dlogp| bf16 8.63e-02 int1 1.38e-01
+loading unsloth/Llama-3.1-8B-Instruct
+Loading weights:   0%|          | 0/291 [00:00<?, ?it/s]Loading weights: 100%|██████████| 291/291 [00:00<00:00, 9412.54it/s]
+66 rows on base int1, prefill fetch k=128: bf16, fetch_all, fetch_all_noprefill, int1, int2, noise_ctrl, oracle, s1, s1_layer, s2, s2sens_a, s2sens_b, sens_a, sens_b, spec, spec_chain, spec_chain_shadow, spec_shadow; ks ['16', '32', '64', '128', 'match']
+estimated peak GPU memory 37.1 GB (66 rows, base int1, largest pause sympy__sympy-12419 t72 with 33844 history tokens); card 47.7 GB
+self targets: bf16 model, temperature 0, seed 0, up to 64 tokens, eos [128001, 128008, 128009]; 0 saved in results/gate_fetch/llama-3.1-8b-instruct-base1-pf128-self-T0/self_targets.jsonl, 31 to generate
+[transformers] Ignoring clean_up_tokenization_spaces=True for BPE tokenizer TokenizersBackend. The clean_up_tokenization post-processing step is designed for WordPiece tokenizers and is destructive for BPE (it strips spaces before punctuation). Set clean_up_tokenization_spaces=False to suppress this warning, or set clean_up_tokenization_spaces_for_bpe_even_though_it_will_corrupt_output=True to force cleanup anyway.
+self targets: 20-64 tokens (mean 43.5)
+sphinx-doc__sphinx-8548 turn 23: hist 8523, 51 steps, 58.7 s | int1 +0.4107 int2 +0.0193 fetch_all -0.0112 | s1@64 +0.2123 s2@64 +0.0006 spec@64 +0.0006 spec_chain@64 +0.0870 s2sens_b@64 -0.0015 oracle@64 -0.0086 s1@match +0.0255 s2@match -0.0082 spec@match -0.0073 spec_chain@match -0.0137 s2sens_b@match -0.0075 oracle@match -0.0101 | k_match 527 | check NLL diff 3.98e-03, max|dlogp| bf16 8.63e-02 int1 1.38e-01
+sphinx-doc__sphinx-8548 turn 50: hist 18627, 33 steps, 69.7 s | int1 +0.4122 int2 +0.0301 fetch_all +0.0368 | s1@64 +0.2244 s2@64 +0.0695 spec@64 +0.0779 spec_chain@64 +0.1139 s2sens_b@64 +0.0666 oracle@64 +0.0567 s1@match +0.0479 s2@match +0.0372 spec@match +0.0419 spec_chain@match +0.0427 s2sens_b@match +0.0376 oracle@match +0.0391 | k_match 1159 | check NLL diff 4.76e-03, max|dlogp| bf16 7.21e-02 int1 9.86e-02
+sphinx-doc__sphinx-8548 turn 66: hist 25528, 45 steps, 111.9 s | int1 +0.6276 int2 +0.0506 fetch_all +0.0292 | s1@64 +0.2513 s2@64 +0.0752 spec@64 +0.0888 spec_chain@64 +0.2340 s2sens_b@64 +0.0707 oracle@64 +0.0490 s1@match +0.0380 s2@match +0.0311 spec@match +0.0338 spec_chain@match +0.0639 s2sens_b@match +0.0295 oracle@match +0.0298 | k_match 1590 | check NLL diff 2.97e-03, max|dlogp| bf16 1.04e-02 int1 2.68e-01
+sphinx-doc__sphinx-8548 turn 76: hist 32027, 49 steps, 152.1 s | int1 +0.6076 int2 +0.0218 fetch_all +0.0257 | s1@64 +0.3420 s2@64 +0.1075 spec@64 +0.0935 spec_chain@64 +0.2540 s2sens_b@64 +0.0938 oracle@64 +0.0712 s1@match +0.0408 s2@match +0.0261 spec@match +0.0231 spec_chain@match +0.0687 s2sens_b@match +0.0261 oracle@match +0.0301 | k_match 1996 | check NLL diff 2.43e-03, max|dlogp| bf16 4.43e-02 int1 1.07e-01
+django__django-11265 turn 19: hist 8925, 64 steps, 75.6 s | int1 +0.6150 int2 +0.0119 fetch_all +0.0046 | s1@64 +0.1507 s2@64 +0.0102 spec@64 +0.0426 spec_chain@64 +0.0061 s2sens_b@64 +0.0053 oracle@64 +0.0101 s1@match +0.0182 s2@match +0.0000 spec@match -0.0001 spec_chain@match -0.0031 s2sens_b@match +0.0091 oracle@match +0.0078 | k_match 552 | check NLL diff 5.51e-03, max|dlogp| bf16 1.03e-01 int1 1.06e-01
+django__django-11265 turn 40: hist 16037, 45 steps, 79.5 s | int1 +0.3908 int2 +0.0240 fetch_all +0.0032 | s1@64 +0.1077 s2@64 +0.0356 spec@64 +0.0175 spec_chain@64 +0.0453 s2sens_b@64 +0.0418 oracle@64 +0.0250 s1@match +0.0227 s2@match +0.0096 spec@match +0.0058 spec_chain@match +0.0175 s2sens_b@match +0.0116 oracle@match +0.0096 | k_match 997 | check NLL diff 1.34e-03, max|dlogp| bf16 1.01e-01 int1 1.01e-01
+django__django-11265 turn 58: hist 26498, 34 steps, 90.3 s | int1 +0.8893 int2 +0.0649 fetch_all -0.0042 | s1@64 +0.1072 s2@64 -0.0111 spec@64 -0.0109 spec_chain@64 +0.1969 s2sens_b@64 -0.0020 oracle@64 +0.0015 s1@match +0.0289 s2@match -0.0003 spec@match +0.0004 spec_chain@match +0.0131 s2sens_b@match +0.0018 oracle@match -0.0008 | k_match 1651 | check NLL diff 4.89e-03, max|dlogp| bf16 3.83e-02 int1 1.15e-01
+django__django-11265 turn 64: hist 32175, 51 steps, 155.9 s | int1 +0.4025 int2 +0.0238 fetch_all +0.0157 | s1@64 +0.0664 s2@64 +0.0137 spec@64 +0.0225 spec_chain@64 +0.1270 s2sens_b@64 +0.0244 oracle@64 +0.0209 s1@match +0.0222 s2@match +0.0181 spec@match +0.0182 spec_chain@match +0.0170 s2sens_b@match +0.0177 oracle@match +0.0183 | k_match 2005 | check NLL diff 8.69e-03, max|dlogp| bf16 5.89e-02 int1 3.73e-01
+sympy__sympy-12419 turn 23: hist 8182, 21 steps, 25.3 s | int1 +0.5690 int2 +0.0308 fetch_all -0.0232 | s1@64 +0.0332 s2@64 -0.0597 spec@64 -0.0545 spec_chain@64 -0.0353 s2sens_b@64 -0.0362 oracle@64 -0.0403 s1@match -0.0286 s2@match -0.0366 spec@match -0.0390 spec_chain@match -0.0337 s2sens_b@match -0.0284 oracle@match -0.0240 | k_match 506 | check NLL diff 3.74e-03, max|dlogp| bf16 9.59e-02 int1 1.54e-01
+sympy__sympy-12419 turn 39: hist 17042, 64 steps, 114.3 s | int1 +0.4713 int2 +0.0853 fetch_all -0.0002 | s1@64 +0.0444 s2@64 +0.0194 spec@64 +0.0176 spec_chain@64 +0.0841 s2sens_b@64 +0.0126 oracle@64 +0.0145 s1@match +0.0079 s2@match +0.0049 spec@match +0.0050 spec_chain@match +0.0041 s2sens_b@match +0.0044 oracle@match +0.0037 | k_match 1060 | check NLL diff 1.26e-03, max|dlogp| bf16 3.96e-02 int1 9.00e-02
+sympy__sympy-12419 turn 58: hist 24030, 64 steps, 148.2 s | int1 +0.4244 int2 +0.0296 fetch_all -0.0026 | s1@64 +0.0393 s2@64 -0.0074 spec@64 -0.0073 spec_chain@64 +0.1209 s2sens_b@64 -0.0044 oracle@64 +0.0023 s1@match +0.0290 s2@match -0.0016 spec@match -0.0032 spec_chain@match +0.0022 s2sens_b@match -0.0010 oracle@match -0.0016 | k_match 1496 | check NLL diff 4.46e-03, max|dlogp| bf16 1.41e-02 int1 1.00e-01
+[W1121 16:56:32.729247252 CUDACachingAllocator.cpp:3934] memory allocation failed with OOM on device 0 while trying to allocate 415236096 bytes (free: 329056256, total: 47699722240).
+sympy__sympy-12419 turn 72: hist 33844, 35 steps, 150.9 s | int1 +0.2649 int2 +0.0124 fetch_all +0.0076 | s1@64 +0.1015 s2@64 +0.0652 spec@64 +0.0676 spec_chain@64 +0.0769 s2sens_b@64 +0.0664 oracle@64 +0.0526 s1@match +0.0199 s2@match +0.0142 spec@match +0.0158 spec_chain@match +0.0211 s2sens_b@match +0.0113 oracle@match +0.0156 | k_match 2110 | check NLL diff 1.60e-03, max|dlogp| bf16 9.61e-02 int1 1.12e-01
+astropy__astropy-13398 turn 11: hist 8542, 40 steps, 49.4 s | int1 +0.2174 int2 +0.0390 fetch_all +0.0051 | s1@64 +0.0609 s2@64 +0.0250 spec@64 +0.0223 spec_chain@64 +0.0233 s2sens_b@64 +0.0213 oracle@64 +0.0185 s1@match +0.0185 s2@match +0.0059 spec@match +0.0072 spec_chain@match +0.0061 s2sens_b@match +0.0075 oracle@match +0.0042 | k_match 528 | check NLL diff 2.75e-03, max|dlogp| bf16 4.20e-02 int1 1.18e-01
+astropy__astropy-13398 turn 28: hist 16215, 49 steps, 85.6 s | int1 +0.2036 int2 -0.0097 fetch_all -0.0244 | s1@64 +0.0514 s2@64 -0.0339 spec@64 -0.0390 spec_chain@64 -0.0366 s2sens_b@64 -0.0228 oracle@64 -0.0220 s1@match -0.0152 s2@match -0.0255 spec@match -0.0264 spec_chain@match -0.0214 s2sens_b@match -0.0215 oracle@match -0.0211 | k_match 1008 | check NLL diff 4.38e-03, max|dlogp| bf16 8.26e-02 int1 1.18e-01
+astropy__astropy-13398 turn 43: hist 25561, 32 steps, 83.1 s | int1 +0.4935 int2 +0.0550 fetch_all +0.0156 | s1@64 +0.1737 s2@64 +0.0838 spec@64 +0.0943 spec_chain@64 +0.2291 s2sens_b@64 +0.0638 oracle@64 +0.0483 s1@match +0.0252 s2@match +0.0162 spec@match +0.0090 spec_chain@match +0.0161 s2sens_b@match +0.0116 oracle@match +0.0179 | k_match 1592 | check NLL diff 1.10e-02, max|dlogp| bf16 7.55e-02 int1 1.24e-01
+pytest-dev__pytest-5787 turn 12: hist 8268, 56 steps, 62.9 s | int1 +0.4748 int2 +0.0424 fetch_all -0.0007 | s1@64 +0.0599 s2@64 +0.0117 spec@64 +0.0113 spec_chain@64 +0.0684 s2sens_b@64 +0.0099 oracle@64 +0.0098 s1@match +0.0089 s2@match +0.0029 spec@match +0.0060 spec_chain@match +0.0041 s2sens_b@match +0.0036 oracle@match +0.0037 | k_match 511 | check NLL diff 2.74e-03, max|dlogp| bf16 7.11e-02 int1 1.39e-01
+pytest-dev__pytest-5787 turn 28: hist 16854, 25 steps, 47.8 s | int1 +0.3475 int2 -0.0229 fetch_all +0.0215 | s1@64 +0.0060 s2@64 +0.0042 spec@64 -0.0024 spec_chain@64 +0.0078 s2sens_b@64 +0.0055 oracle@64 +0.0207 s1@match +0.0071 s2@match +0.0182 spec@match +0.0167 spec_chain@match +0.0269 s2sens_b@match +0.0199 oracle@match +0.0204 | k_match 1048 | check NLL diff 1.84e-02, max|dlogp| bf16 7.45e-02 int1 1.77e-01
+pytest-dev__pytest-5787 turn 35: hist 24021, 30 steps, 75.2 s | int1 +0.5786 int2 +0.0382 fetch_all +0.0980 | s1@64 +0.2500 s2@64 +0.1403 spec@64 +0.1669 spec_chain@64 +0.1891 s2sens_b@64 +0.1185 oracle@64 +0.1201 s1@match +0.0997 s2@match +0.1075 spec@match +0.0985 spec_chain@match +0.1048 s2sens_b@match +0.1023 oracle@match +0.0988 | k_match 1496 | check NLL diff 5.32e-03, max|dlogp| bf16 1.07e-01 int1 2.06e-01
+pydata__xarray-4687 turn 17: hist 8305, 45 steps, 51.2 s | int1 +0.3213 int2 -0.0021 fetch_all +0.0025 | s1@64 +0.0779 s2@64 +0.0005 spec@64 +0.0197 spec_chain@64 +0.0561 s2sens_b@64 -0.0021 oracle@64 -0.0038 s1@match +0.0116 s2@match +0.0004 spec@match -0.0017 spec_chain@match -0.0015 s2sens_b@match -0.0001 oracle@match -0.0015 | k_match 514 | check NLL diff 3.02e-03, max|dlogp| bf16 6.96e-02 int1 1.21e-01
+pydata__xarray-4687 turn 44: hist 16198, 36 steps, 63.8 s | int1 +0.5305 int2 +0.0590 fetch_all +0.0336 | s1@64 +0.3327 s2@64 +0.1444 spec@64 +0.1668 spec_chain@64 +0.2785 s2sens_b@64 +0.1377 oracle@64 +0.0882 s1@match +0.1023 s2@match +0.0493 spec@match +0.0496 spec_chain@match +0.1090 s2sens_b@match +0.0521 oracle@match +0.0395 | k_match 1007 | check NLL diff 9.97e-03, max|dlogp| bf16 6.33e-02 int1 9.70e-02
+pydata__xarray-4687 turn 65: hist 24652, 64 steps, 150.8 s | int1 +0.3761 int2 +0.0191 fetch_all +0.0220 | s1@64 +0.1489 s2@64 +0.0532 spec@64 +0.1050 spec_chain@64 +0.1079 s2sens_b@64 +0.0407 oracle@64 +0.0344 s1@match +0.0326 s2@match +0.0253 spec@match +0.0283 spec_chain@match +0.0299 s2sens_b@match +0.0240 oracle@match +0.0241 | k_match 1535 | check NLL diff 9.12e-03, max|dlogp| bf16 5.52e-02 int1 1.15e-01
+pydata__xarray-4687 turn 85: hist 32285, 41 steps, 134.4 s | int1 +0.6641 int2 +0.0667 fetch_all +0.0406 | s1@64 +0.3163 s2@64 +0.0749 spec@64 +0.1105 spec_chain@64 +0.2550 s2sens_b@64 +0.0956 oracle@64 +0.0683 s1@match +0.0549 s2@match +0.0402 spec@match +0.0384 spec_chain@match +0.0526 s2sens_b@match +0.0325 oracle@match +0.0388 | k_match 2012 | check NLL diff 1.13e-03, max|dlogp| bf16 5.36e-02 int1 1.03e-01
+mwaskom__seaborn-3069 turn 23: hist 8089, 41 steps, 46.8 s | int1 +0.0850 int2 +0.0593 fetch_all +0.0256 | s1@64 +0.0395 s2@64 +0.0340 spec@64 +0.0343 spec_chain@64 +0.0096 s2sens_b@64 +0.0436 oracle@64 +0.0331 s1@match +0.0433 s2@match +0.0289 spec@match +0.0315 spec_chain@match +0.0339 s2sens_b@match +0.0304 oracle@match +0.0290 | k_match 500 | check NLL diff 1.48e-03, max|dlogp| bf16 8.26e-02 int1 1.48e-01
+mwaskom__seaborn-3069 turn 43: hist 16063, 64 steps, 108.5 s | int1 +0.2239 int2 +0.0150 fetch_all -0.0055 | s1@64 +0.1633 s2@64 +0.0094 spec@64 +0.0062 spec_chain@64 +0.2068 s2sens_b@64 +0.0185 oracle@64 +0.0120 s1@match +0.0259 s2@match -0.0049 spec@match -0.0028 spec_chain@match +0.0008 s2sens_b@match +0.0014 oracle@match +0.0010 | k_match 998 | check NLL diff 4.25e-04, max|dlogp| bf16 1.10e-01 int1 8.44e-02
+mwaskom__seaborn-3069 turn 67: hist 24577, 64 steps, 150.4 s | int1 +1.1091 int2 +0.1161 fetch_all +0.0164 | s1@64 +0.1707 s2@64 +0.0435 spec@64 +0.0482 spec_chain@64 +0.5559 s2sens_b@64 +0.0652 oracle@64 +0.0521 s1@match +0.0260 s2@match +0.0220 spec@match +0.0216 spec_chain@match +0.0504 s2sens_b@match +0.0242 oracle@match +0.0208 | k_match 1531 | check NLL diff 4.93e-03, max|dlogp| bf16 8.50e-02 int1 1.38e-01
+psf__requests-2931 turn 21: hist 8425, 54 steps, 65.4 s | int1 +0.1650 int2 +0.0391 fetch_all +0.0012 | s1@64 +0.0334 s2@64 +0.0180 spec@64 +0.0140 spec_chain@64 +0.0140 s2sens_b@64 +0.0119 oracle@64 +0.0075 s1@match -0.0019 s2@match +0.0049 spec@match +0.0057 spec_chain@match -0.0017 s2sens_b@match +0.0074 oracle@match +0.0070 | k_match 521 | check NLL diff 3.41e-03, max|dlogp| bf16 4.71e-02 int1 1.27e-01
+psf__requests-2931 turn 43: hist 16625, 20 steps, 39.7 s | int1 +0.3051 int2 +0.0163 fetch_all +0.0194 | s1@64 +0.1761 s2@64 +0.0409 spec@64 +0.0324 spec_chain@64 +0.0988 s2sens_b@64 +0.0272 oracle@64 +0.0226 s1@match +0.0340 s2@match +0.0112 spec@match +0.0265 spec_chain@match +0.0178 s2sens_b@match +0.0228 oracle@match +0.0233 | k_match 1034 | check NLL diff 7.27e-03, max|dlogp| bf16 3.42e-02 int1 1.46e-01
+scikit-learn__scikit-learn-11310 turn 22: hist 8058, 21 steps, 26.1 s | int1 +0.4818 int2 +0.0504 fetch_all +0.0490 | s1@64 +0.1212 s2@64 +0.0911 spec@64 +0.1028 spec_chain@64 +0.1332 s2sens_b@64 +0.0831 oracle@64 +0.0677 s1@match +0.0527 s2@match +0.0502 spec@match +0.0582 spec_chain@match +0.0633 s2sens_b@match +0.0507 oracle@match +0.0595 | k_match 498 | check NLL diff 6.48e-03, max|dlogp| bf16 1.04e-01 int1 1.17e-01
+scikit-learn__scikit-learn-11310 turn 50: hist 16064, 51 steps, 87.7 s | int1 +0.0342 int2 -0.0053 fetch_all +0.0057 | s1@64 +0.0436 s2@64 +0.0236 spec@64 +0.0236 spec_chain@64 +0.0298 s2sens_b@64 +0.0203 oracle@64 +0.0149 s1@match +0.0290 s2@match +0.0118 spec@match +0.0101 spec_chain@match +0.0436 s2sens_b@match +0.0111 oracle@match +0.0116 | k_match 999 | check NLL diff 2.81e-03, max|dlogp| bf16 4.91e-02 int1 1.03e-01
+pallets__flask-5014 turn 22: hist 8014, 29 steps, 34.5 s | int1 +1.4538 int2 +0.0266 fetch_all +0.0289 | s1@64 +0.7894 s2@64 +0.0355 spec@64 +0.0360 spec_chain@64 +0.8635 s2sens_b@64 +0.0437 oracle@64 +0.0473 s1@match +0.4247 s2@match +0.0267 spec@match +0.0243 spec_chain@match +0.1237 s2sens_b@match +0.0347 oracle@match +0.0298 | k_match 495 | check NLL diff 6.05e-03, max|dlogp| bf16 1.01e-01 int1 1.72e-01
+pallets__flask-5014 turn 38: hist 17955, 29 steps, 57.1 s | int1 +1.2007 int2 +0.0272 fetch_all +0.0129 | s1@64 +0.5140 s2@64 +0.0442 spec@64 +0.0385 spec_chain@64 +0.3077 s2sens_b@64 +0.0384 oracle@64 +0.0331 s1@match +0.2282 s2@match +0.0074 spec@match +0.0136 spec_chain@match +0.0426 s2sens_b@match +0.0136 oracle@match +0.0113 | k_match 1117 | check NLL diff 8.52e-03, max|dlogp| bf16 8.57e-02 int1 8.18e-02
+# Per-step fetch study: unsloth/Llama-3.1-8B-Instruct, base int1, prefill fetch k=128, self-written targets (T=0)
+
+31 pauses, 43.5 teacher-forced steps per pause on average (cap 64). Targets: the bf16 model's own next message (greedy, seed 0 + per-pause offset; bf16 prefill of history and tool output; 20-64 tokens, mean 43.5), saved in self_targets.jsonl; every row is teacher-forced on them. dNLL in nats per target token against the per-step bf16 row. Base: int1 history, block 16 (SpeCache's modified 1-bit quantizer); block 0, the recent 64 tokens and the trailing partial block are bf16. Tool output prefilled over the int1 history with a per-chunk top-128 fetch (fetch rows; the uniform int1 row and fetch_all_noprefill without); uniform rows over their own precision, the bf16 row over bf16.
+
+## Checks
+
+- bf16 row vs itself: max |dNLL| 0.0e+00
+- per-step vs sdpa teacher forcing, NLL difference per pause (the stop criterion): bf16 row max 0.0060 (mean 0.0017), int1 row max 0.0184 (mean 0.0046)
+- uniform int1 dNLL, sdpa batched +0.4947 vs per-step +0.4952 (max per-pause |difference| 0.0170)
+- largest single-token log-prob difference (reported only): bf16 0.110, int1 0.373
+- 85.6 s per pause on average, 44.2 min total
+- speculative token (spec rows, guess of each step's input from the real previous token): correct on 93.4% (spec@16), 94.5% (spec@32), 95.5% (spec@64), 96.8% (spec@128), 98.0% (spec@match) of steps
+- speculative token (spec_chain rows, SpeCache's chained guess of the next input): correct on 30.8% (spec_chain@16), 29.6% (spec_chain@32), 35.5% (spec_chain@64), 42.5% (spec_chain@128), 55.7% (spec_chain@match) of steps
+- k = match: 1,116 tokens per KV head and layer on average (min 495, max 2,110), i.e. int1 + fetched set = int2's memory
+- GPU memory: measured peak 38.7 GB (allocated by PyTorch), estimated 37.1 GB
+
+## Quality
+
+Fetched = (layer, KV head, token) pairs fetched per step; distinct = distinct token positions per layer per step. Recall = share of each fetched set that is also in the oracle set of the same size, computed with the row's own current query. The last column compares each fetch scheme with s2 (current-step attention over base keys) at the same k. KL = KL(bf16 row || row) of the next-token distribution, nats, averaged over steps and pauses.
+
+Noise floor (noise_ctrl: bf16 tool-output prefill + fetch-all, exactly the bf16 row in exact arithmetic, so any dNLL is bf16 rounding in the per-step path): mean +0.0045 [95% CI +0.0010, +0.0093], s.d. over pauses 0.0124, mean |dNLL| 0.0064, max |dNLL| 0.0614; top-1 0.990 (min 0.939); KL vs bf16 mean 0.0025 (max 0.0220). Per-pause scheme differences smaller than about 0.0248 (2 s.d.) are within rounding noise.
+
+| scheme | dNLL | KL | top-1 | recall | fetched / step | distinct / layer | dNLL - int1 [95% CI] | dNLL - int2 [95% CI] | dNLL - s2 same k [95% CI] | KL - int1 [95% CI] | KL - int2 [95% CI] |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| bf16 | +0.0000 | 0.0000 | 1.000 |  |  |  | -0.4952 [-0.6028, -0.3932] | -0.0334 [-0.0430, -0.0234] |  | -0.4674 [-0.5452, -0.3930] | -0.0224 [-0.0257, -0.0192] |
+| noise_ctrl | +0.0045 | 0.0025 | 0.990 |  | 4,570,740 | 17,854 | -0.4908 [-0.5963, -0.3893] | -0.0289 [-0.0381, -0.0188] |  | -0.4649 [-0.5420, -0.3902] | -0.0199 [-0.0235, -0.0162] |
+| int1 | +0.4952 | 0.4674 | 0.791 |  |  |  |  | +0.4619 [+0.3634, +0.5657] |  |  | +0.4451 [+0.3720, +0.5204] |
+| int2 | +0.0334 | 0.0224 | 0.952 |  |  |  | -0.4619 [-0.5657, -0.3634] |  |  | -0.4451 [-0.5204, -0.3720] |  |
+| fetch_all | +0.0145 | 0.0123 | 0.981 |  | 4,570,740 | 17,854 | -0.4807 [-0.5875, -0.3803] | -0.0189 [-0.0298, -0.0077] |  | -0.4551 [-0.5310, -0.3812] | -0.0100 [-0.0145, -0.0053] |
+| fetch_all_noprefill | +0.0293 | 0.0314 | 0.964 |  | 4,570,740 | 17,854 | -0.4659 [-0.5711, -0.3664] | -0.0040 [-0.0170, +0.0090] |  | -0.4360 [-0.5108, -0.3633] | +0.0090 [+0.0013, +0.0174] |
+| s1@16 | +0.2898 | 0.2701 | 0.846 | 0.23 | 4,096 | 99 | -0.2054 [-0.2641, -0.1515] | +0.2565 [+0.1890, +0.3327] | +0.2202 [+0.1631, +0.2853] | -0.1973 [-0.2449, -0.1536] | +0.2477 [+0.1960, +0.3069] |
+| s1@32 | +0.2273 | 0.2100 | 0.870 | 0.28 | 8,192 | 187 | -0.2679 [-0.3321, -0.2027] | +0.1940 [+0.1334, +0.2634] | +0.1772 [+0.1254, +0.2421] | -0.2574 [-0.3072, -0.2090] | +0.1876 [+0.1421, +0.2423] |
+| s1@64 | +0.1680 | 0.1525 | 0.895 | 0.33 | 16,384 | 348 | -0.3272 [-0.3994, -0.2541] | +0.1347 [+0.0834, +0.1956] | +0.1305 [+0.0856, +0.1878] | -0.3150 [-0.3699, -0.2608] | +0.1301 [+0.0919, +0.1756] |
+| s1@128 | +0.1175 | 0.1041 | 0.917 | 0.38 | 32,768 | 641 | -0.3777 [-0.4565, -0.2974] | +0.0842 [+0.0422, +0.1333] | +0.0901 [+0.0539, +0.1364] | -0.3633 [-0.4231, -0.3059] | +0.0817 [+0.0530, +0.1172] |
+| s1@match | +0.0477 | 0.0353 | 0.960 | 0.57 | 285,671 | 3,949 | -0.4475 [-0.5348, -0.3584] | +0.0144 [-0.0112, +0.0490] | +0.0318 [+0.0105, +0.0628] | -0.4321 [-0.4975, -0.3668] | +0.0130 [-0.0026, +0.0353] |
+| sens_a@16 | +0.2869 | 0.2657 | 0.850 | 0.24 | 4,096 | 100 | -0.2083 [-0.2647, -0.1537] | +0.2536 [+0.1877, +0.3305] | +0.2173 [+0.1609, +0.2837] | -0.2017 [-0.2478, -0.1594] | +0.2434 [+0.1929, +0.3036] |
+| sens_a@32 | +0.2240 | 0.2057 | 0.878 | 0.28 | 8,192 | 188 | -0.2712 [-0.3379, -0.2043] | +0.1907 [+0.1307, +0.2606] | +0.1739 [+0.1225, +0.2385] | -0.2617 [-0.3123, -0.2122] | +0.1833 [+0.1374, +0.2369] |
+| sens_a@64 | +0.1675 | 0.1497 | 0.896 | 0.33 | 16,384 | 351 | -0.3277 [-0.4003, -0.2530] | +0.1341 [+0.0846, +0.1926] | +0.1300 [+0.0875, +0.1846] | -0.3177 [-0.3733, -0.2638] | +0.1273 [+0.0900, +0.1711] |
+| sens_a@128 | +0.1162 | 0.0996 | 0.918 | 0.39 | 32,768 | 645 | -0.3790 [-0.4596, -0.2983] | +0.0829 [+0.0420, +0.1315] | +0.0888 [+0.0538, +0.1328] | -0.3679 [-0.4271, -0.3098] | +0.0772 [+0.0497, +0.1105] |
+| sens_a@match | +0.0475 | 0.0341 | 0.959 | 0.57 | 285,671 | 3,959 | -0.4477 [-0.5355, -0.3582] | +0.0142 [-0.0107, +0.0481] | +0.0316 [+0.0108, +0.0617] | -0.4334 [-0.4984, -0.3679] | +0.0117 [-0.0034, +0.0335] |
+| sens_b@16 | +0.2993 | 0.2731 | 0.842 | 0.19 | 4,096 | 107 | -0.1959 [-0.2539, -0.1403] | +0.2659 [+0.1989, +0.3440] | +0.2297 [+0.1735, +0.2979] | -0.1944 [-0.2408, -0.1517] | +0.2507 [+0.1990, +0.3117] |
+| sens_b@32 | +0.2359 | 0.2131 | 0.869 | 0.23 | 8,192 | 203 | -0.2593 [-0.3238, -0.1942] | +0.2025 [+0.1424, +0.2734] | +0.1857 [+0.1341, +0.2506] | -0.2543 [-0.3049, -0.2058] | +0.1907 [+0.1455, +0.2449] |
+| sens_b@64 | +0.1828 | 0.1566 | 0.892 | 0.28 | 16,384 | 379 | -0.3124 [-0.3827, -0.2388] | +0.1494 [+0.0993, +0.2103] | +0.1452 [+0.1015, +0.2023] | -0.3108 [-0.3639, -0.2575] | +0.1342 [+0.0969, +0.1793] |
+| sens_b@128 | +0.1332 | 0.1084 | 0.911 | 0.33 | 32,768 | 700 | -0.3620 [-0.4395, -0.2823] | +0.0998 [+0.0589, +0.1478] | +0.1058 [+0.0706, +0.1491] | -0.3591 [-0.4180, -0.3013] | +0.0860 [+0.0578, +0.1195] |
+| sens_b@match | +0.0508 | 0.0361 | 0.959 | 0.51 | 285,671 | 4,245 | -0.4444 [-0.5305, -0.3549] | +0.0174 [-0.0077, +0.0524] | +0.0349 [+0.0131, +0.0663] | -0.4313 [-0.4963, -0.3667] | +0.0138 [-0.0021, +0.0368] |
+| spec_chain@16 | +0.2417 | 0.2209 | 0.862 | 0.28 | 4,096 | 101 | -0.2535 [-0.3117, -0.1996] | +0.2084 [+0.1396, +0.2895] | +0.1721 [+0.1112, +0.2432] | -0.2465 [-0.2899, -0.2058] | +0.1986 [+0.1474, +0.2594] |
+| spec_chain@32 | +0.1975 | 0.1755 | 0.888 | 0.31 | 8,192 | 190 | -0.2977 [-0.3545, -0.2426] | +0.1641 [+0.1019, +0.2338] | +0.1473 [+0.0875, +0.2138] | -0.2920 [-0.3344, -0.2514] | +0.1531 [+0.1071, +0.2026] |
+| spec_chain@64 | +0.1519 | 0.1340 | 0.907 | 0.37 | 16,384 | 353 | -0.3433 [-0.4079, -0.2779] | +0.1185 [+0.0651, +0.1821] | +0.1144 [+0.0619, +0.1773] | -0.3335 [-0.3788, -0.2884] | +0.1116 [+0.0736, +0.1559] |
+| spec_chain@128 | +0.1063 | 0.0907 | 0.926 | 0.44 | 32,768 | 646 | -0.3889 [-0.4632, -0.3158] | +0.0730 [+0.0334, +0.1196] | +0.0789 [+0.0411, +0.1238] | -0.3767 [-0.4304, -0.3227] | +0.0683 [+0.0415, +0.1000] |
+| spec_chain@match | +0.0291 | 0.0218 | 0.970 | 0.65 | 285,671 | 3,976 | -0.4662 [-0.5669, -0.3684] | -0.0043 [-0.0182, +0.0097] | +0.0131 [+0.0064, +0.0214] | -0.4456 [-0.5197, -0.3736] | -0.0006 [-0.0061, +0.0055] |
+| spec@16 | +0.0901 | 0.0925 | 0.927 | 0.41 | 4,096 | 98 | -0.4051 [-0.5042, -0.3099] | +0.0567 [+0.0304, +0.0843] | +0.0204 [+0.0112, +0.0315] | -0.3749 [-0.4470, -0.3057] | +0.0701 [+0.0514, +0.0915] |
+| spec@32 | +0.0621 | 0.0675 | 0.939 | 0.46 | 8,192 | 185 | -0.4331 [-0.5384, -0.3348] | +0.0287 [+0.0072, +0.0512] | +0.0119 [+0.0052, +0.0194] | -0.3999 [-0.4741, -0.3288] | +0.0451 [+0.0298, +0.0621] |
+| spec@64 | +0.0435 | 0.0462 | 0.947 | 0.51 | 16,384 | 344 | -0.4517 [-0.5586, -0.3510] | +0.0101 [-0.0069, +0.0280] | +0.0059 [+0.0011, +0.0116] | -0.4212 [-0.4970, -0.3493] | +0.0238 [+0.0137, +0.0352] |
+| spec@128 | +0.0294 | 0.0299 | 0.963 | 0.56 | 32,768 | 634 | -0.4658 [-0.5719, -0.3647] | -0.0039 [-0.0174, +0.0105] | +0.0020 [-0.0013, +0.0056] | -0.4375 [-0.5140, -0.3648] | +0.0075 [+0.0004, +0.0152] |
+| spec@match | +0.0164 | 0.0134 | 0.977 | 0.72 | 285,671 | 3,936 | -0.4788 [-0.5853, -0.3774] | -0.0169 [-0.0278, -0.0060] | +0.0005 [-0.0010, +0.0021] | -0.4540 [-0.5301, -0.3800] | -0.0090 [-0.0134, -0.0042] |
+| s2@16 | +0.0696 | 0.0746 | 0.939 | 0.42 | 4,096 | 98 | -0.4256 [-0.5274, -0.3288] | +0.0363 [+0.0146, +0.0594] |  | -0.3928 [-0.4667, -0.3229] | +0.0522 [+0.0383, +0.0678] |
+| s2@32 | +0.0502 | 0.0549 | 0.950 | 0.47 | 8,192 | 185 | -0.4450 [-0.5509, -0.3447] | +0.0168 [-0.0017, +0.0358] |  | -0.4125 [-0.4876, -0.3417] | +0.0326 [+0.0215, +0.0449] |
+| s2@64 | +0.0375 | 0.0390 | 0.958 | 0.52 | 16,384 | 344 | -0.4577 [-0.5633, -0.3561] | +0.0042 [-0.0115, +0.0193] |  | -0.4284 [-0.5040, -0.3565] | +0.0167 [+0.0083, +0.0261] |
+| s2@128 | +0.0274 | 0.0270 | 0.966 | 0.57 | 32,768 | 634 | -0.4678 [-0.5738, -0.3661] | -0.0059 [-0.0192, +0.0070] |  | -0.4404 [-0.5166, -0.3675] | +0.0047 [-0.0017, +0.0114] |
+| s2@match | +0.0159 | 0.0133 | 0.976 | 0.72 | 285,671 | 3,935 | -0.4793 [-0.5860, -0.3780] | -0.0174 [-0.0284, -0.0061] |  | -0.4542 [-0.5301, -0.3801] | -0.0091 [-0.0135, -0.0044] |
+| s2sens_a@16 | +0.0669 | 0.0719 | 0.939 | 0.44 | 4,096 | 99 | -0.4283 [-0.5323, -0.3296] | +0.0335 [+0.0127, +0.0559] | -0.0027 [-0.0056, -0.0001] | -0.3956 [-0.4704, -0.3257] | +0.0495 [+0.0359, +0.0645] |
+| s2sens_a@32 | +0.0491 | 0.0517 | 0.951 | 0.48 | 8,192 | 186 | -0.4461 [-0.5514, -0.3446] | +0.0157 [-0.0025, +0.0344] | -0.0011 [-0.0035, +0.0010] | -0.4158 [-0.4903, -0.3446] | +0.0293 [+0.0186, +0.0412] |
+| s2sens_a@64 | +0.0368 | 0.0367 | 0.954 | 0.53 | 16,384 | 346 | -0.4584 [-0.5641, -0.3567] | +0.0035 [-0.0115, +0.0186] | -0.0007 [-0.0024, +0.0007] | -0.4307 [-0.5064, -0.3593] | +0.0143 [+0.0064, +0.0233] |
+| s2sens_a@128 | +0.0271 | 0.0251 | 0.962 | 0.58 | 32,768 | 638 | -0.4681 [-0.5736, -0.3669] | -0.0062 [-0.0190, +0.0064] | -0.0003 [-0.0018, +0.0012] | -0.4424 [-0.5182, -0.3698] | +0.0027 [-0.0033, +0.0091] |
+| s2sens_a@match | +0.0168 | 0.0134 | 0.977 | 0.72 | 285,671 | 3,943 | -0.4784 [-0.5852, -0.3773] | -0.0166 [-0.0276, -0.0054] | +0.0009 [-0.0002, +0.0021] | -0.4541 [-0.5301, -0.3800] | -0.0090 [-0.0134, -0.0042] |
+| s2sens_b@16 | +0.0708 | 0.0704 | 0.939 | 0.35 | 4,096 | 106 | -0.4244 [-0.5288, -0.3251] | +0.0374 [+0.0153, +0.0609] | +0.0012 [-0.0040, +0.0063] | -0.3970 [-0.4715, -0.3273] | +0.0480 [+0.0340, +0.0636] |
+| s2sens_b@32 | +0.0506 | 0.0472 | 0.950 | 0.39 | 8,192 | 200 | -0.4446 [-0.5496, -0.3431] | +0.0173 [-0.0001, +0.0348] | +0.0004 [-0.0035, +0.0041] | -0.4203 [-0.4952, -0.3489] | +0.0248 [+0.0144, +0.0359] |
+| s2sens_b@64 | +0.0373 | 0.0323 | 0.962 | 0.43 | 16,384 | 375 | -0.4579 [-0.5632, -0.3572] | +0.0040 [-0.0092, +0.0172] | -0.0002 [-0.0040, +0.0035] | -0.4352 [-0.5108, -0.3630] | +0.0099 [+0.0023, +0.0181] |
+| s2sens_b@128 | +0.0293 | 0.0230 | 0.963 | 0.47 | 32,768 | 692 | -0.4659 [-0.5719, -0.3647] | -0.0040 [-0.0158, +0.0072] | +0.0019 [-0.0013, +0.0053] | -0.4445 [-0.5205, -0.3715] | +0.0006 [-0.0050, +0.0065] |
+| s2sens_b@match | +0.0174 | 0.0131 | 0.978 | 0.63 | 285,671 | 4,229 | -0.4778 [-0.5837, -0.3766] | -0.0159 [-0.0268, -0.0050] | +0.0015 [+0.0001, +0.0030] | -0.4544 [-0.5306, -0.3803] | -0.0093 [-0.0137, -0.0046] |
+| oracle@16 | +0.0444 | 0.0405 | 0.953 | 1.00 | 4,096 | 91 | -0.4508 [-0.5554, -0.3496] | +0.0110 [-0.0047, +0.0264] | -0.0252 [-0.0354, -0.0159] | -0.4269 [-0.5021, -0.3552] | +0.0181 [+0.0088, +0.0285] |
+| oracle@32 | +0.0363 | 0.0299 | 0.960 | 1.00 | 8,192 | 171 | -0.4589 [-0.5634, -0.3580] | +0.0030 [-0.0100, +0.0164] | -0.0138 [-0.0219, -0.0065] | -0.4375 [-0.5139, -0.3649] | +0.0075 [+0.0004, +0.0154] |
+| oracle@64 | +0.0299 | 0.0233 | 0.965 | 1.00 | 16,384 | 319 | -0.4653 [-0.5697, -0.3649] | -0.0034 [-0.0153, +0.0085] | -0.0076 [-0.0137, -0.0022] | -0.4441 [-0.5204, -0.3711] | +0.0010 [-0.0050, +0.0073] |
+| oracle@128 | +0.0257 | 0.0189 | 0.965 | 1.00 | 32,768 | 590 | -0.4695 [-0.5751, -0.3693] | -0.0077 [-0.0186, +0.0032] | -0.0017 [-0.0064, +0.0025] | -0.4486 [-0.5244, -0.3753] | -0.0035 [-0.0084, +0.0015] |
+| oracle@match | +0.0173 | 0.0130 | 0.977 | 1.00 | 285,671 | 3,712 | -0.4779 [-0.5846, -0.3765] | -0.0161 [-0.0269, -0.0051] | +0.0014 [-0.0003, +0.0031] | -0.4544 [-0.5304, -0.3803] | -0.0093 [-0.0137, -0.0046] |
+| s1_layer@16 | +0.2750 | 0.2625 | 0.852 | 0.24 | 4,096 | 16 | -0.2202 [-0.2800, -0.1651] | +0.2417 [+0.1735, +0.3200] | +0.2054 [+0.1474, +0.2750] | -0.2049 [-0.2541, -0.1605] | +0.2401 [+0.1893, +0.3003] |
+| s1_layer@32 | +0.2255 | 0.2126 | 0.871 | 0.29 | 8,192 | 32 | -0.2697 [-0.3376, -0.2050] | +0.1921 [+0.1309, +0.2645] | +0.1753 [+0.1238, +0.2425] | -0.2549 [-0.3079, -0.2054] | +0.1902 [+0.1444, +0.2440] |
+| s1_layer@64 | +0.1726 | 0.1631 | 0.896 | 0.34 | 16,384 | 64 | -0.3226 [-0.3955, -0.2497] | +0.1393 [+0.0855, +0.2039] | +0.1351 [+0.0879, +0.1971] | -0.3043 [-0.3596, -0.2501] | +0.1407 [+0.1014, +0.1888] |
+| s1_layer@128 | +0.1255 | 0.1191 | 0.917 | 0.40 | 32,768 | 128 | -0.3697 [-0.4459, -0.2920] | +0.0922 [+0.0442, +0.1522] | +0.0981 [+0.0563, +0.1560] | -0.3483 [-0.4040, -0.2937] | +0.0967 [+0.0629, +0.1397] |
+| s1_layer@match | +0.0473 | 0.0384 | 0.959 | 0.59 | 285,671 | 1,116 | -0.4479 [-0.5319, -0.3599] | +0.0140 [-0.0171, +0.0581] | +0.0314 [+0.0053, +0.0725] | -0.4291 [-0.4918, -0.3672] | +0.0160 [-0.0033, +0.0467] |
+
+## Equal GPU-resident memory: int1 + fetched tokens vs uniform int2
+
+Each @match row fetches, per KV head and layer and step, as many tokens as fill the memory difference between the int1 and int2 histories, so its resident history equals uniform int2's. Negative = better than uniform int2. By > noise = more than 0.0248.
+
+| scheme | resident (int1 + fetch) | resident int2 | dNLL | dNLL int2 | dNLL - int2 [95% CI] | median difference | beats int2 | by > noise | loses by > noise | KL | KL int2 | KL - int2 [95% CI] | lower KL than int2 |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| s1@match | 0.2004 | 0.2004 | +0.0477 | +0.0334 | +0.0144 [-0.0112, +0.0490] | +0.0023 | 15/31 | 7/31 | 6/31 | 0.0353 | 0.0224 | +0.0130 [-0.0026, +0.0353] | 15/31 |
+| sens_a@match | 0.2004 | 0.2004 | +0.0475 | +0.0334 | +0.0142 [-0.0107, +0.0481] | -0.0002 | 16/31 | 7/31 | 6/31 | 0.0341 | 0.0224 | +0.0117 [-0.0034, +0.0335] | 17/31 |
+| sens_b@match | 0.2004 | 0.2004 | +0.0508 | +0.0334 | +0.0174 [-0.0077, +0.0524] | +0.0026 | 12/31 | 7/31 | 8/31 | 0.0361 | 0.0224 | +0.0138 [-0.0021, +0.0368] | 17/31 |
+| spec_chain@match | 0.2004 | 0.2004 | +0.0291 | +0.0334 | -0.0043 [-0.0182, +0.0097] | -0.0069 | 17/31 | 11/31 | 6/31 | 0.0218 | 0.0224 | -0.0006 [-0.0061, +0.0055] | 19/31 |
+| spec@match | 0.2004 | 0.2004 | +0.0164 | +0.0334 | -0.0169 [-0.0278, -0.0060] | -0.0168 | 21/31 | 12/31 | 2/31 | 0.0134 | 0.0224 | -0.0090 [-0.0134, -0.0042] | 24/31 |
+| s2@match | 0.2004 | 0.2004 | +0.0159 | +0.0334 | -0.0174 [-0.0284, -0.0061] | -0.0158 | 22/31 | 12/31 | 2/31 | 0.0133 | 0.0224 | -0.0091 [-0.0135, -0.0044] | 25/31 |
+| s2sens_a@match | 0.2004 | 0.2004 | +0.0168 | +0.0334 | -0.0166 [-0.0276, -0.0054] | -0.0136 | 21/31 | 11/31 | 2/31 | 0.0134 | 0.0224 | -0.0090 [-0.0134, -0.0042] | 24/31 |
+| s2sens_b@match | 0.2004 | 0.2004 | +0.0174 | +0.0334 | -0.0159 [-0.0268, -0.0050] | -0.0124 | 21/31 | 12/31 | 2/31 | 0.0131 | 0.0224 | -0.0093 [-0.0137, -0.0046] | 25/31 |
+| oracle@match | 0.2004 | 0.2004 | +0.0173 | +0.0334 | -0.0161 [-0.0269, -0.0051] | -0.0144 | 20/31 | 12/31 | 2/31 | 0.0130 | 0.0224 | -0.0093 [-0.0137, -0.0046] | 24/31 |
+| s1_layer@match | 0.2004 | 0.2004 | +0.0473 | +0.0334 | +0.0140 [-0.0171, +0.0581] | -0.0045 | 17/31 | 10/31 | 6/31 | 0.0384 | 0.0224 | +0.0160 [-0.0033, +0.0467] | 17/31 |
+
+## Robustness per pause
+
+Mean without outlier = mean over pauses after removing the scheme's single pause farthest from its median (named). Beats int2 = pauses where the scheme's dNLL is below uniform int2's; by > noise = by more than the noise floor (0.0248, 2 s.d. of noise_ctrl). 31 pauses.
+
+| scheme | mean | median | mean without outlier | outlier pause (dNLL) | beats int2 | beats int2 by > noise | loses to int2 by > noise |
+|---|---|---|---|---|---|---|---|
+| bf16 | +0.0000 | +0.0000 | +0.0000 | sphinx-doc__sphinx-8548 t23 (+0.0000) | 27/31 | 18/31 | 0/31 |
+| noise_ctrl | +0.0045 | +0.0009 | +0.0026 | pytest-dev__pytest-5787 t35 (+0.0614) | 27/31 | 15/31 | 1/31 |
+| int1 | +0.4952 | +0.4244 | +0.4632 | pallets__flask-5014 t22 (+1.4538) | 0/31 | 0/31 | 31/31 |
+| int2 | +0.0334 | +0.0296 | +0.0306 | mwaskom__seaborn-3069 t67 (+0.1161) |  |  |  |
+| fetch_all | +0.0145 | +0.0129 | +0.0117 | pytest-dev__pytest-5787 t35 (+0.0980) | 22/31 | 13/31 | 2/31 |
+| fetch_all_noprefill | +0.0293 | +0.0223 | +0.0262 | pydata__xarray-4687 t85 (+0.1238) | 15/31 | 11/31 | 6/31 |
+| s1@16 | +0.2898 | +0.2273 | +0.2641 | pallets__flask-5014 t22 (+1.0616) | 0/31 | 0/31 | 30/31 |
+| s1@32 | +0.2273 | +0.1944 | +0.2032 | pallets__flask-5014 t22 (+0.9499) | 1/31 | 0/31 | 28/31 |
+| s1@64 | +0.1680 | +0.1212 | +0.1473 | pallets__flask-5014 t22 (+0.7894) | 3/31 | 1/31 | 24/31 |
+| s1@128 | +0.1175 | +0.0784 | +0.1009 | pallets__flask-5014 t22 (+0.6153) | 6/31 | 3/31 | 19/31 |
+| s1@match | +0.0477 | +0.0260 | +0.0352 | pallets__flask-5014 t22 (+0.4247) | 15/31 | 7/31 | 6/31 |
+| sens_a@16 | +0.2869 | +0.2509 | +0.2607 | pallets__flask-5014 t22 (+1.0734) | 0/31 | 0/31 | 30/31 |
+| sens_a@32 | +0.2240 | +0.1903 | +0.2004 | pallets__flask-5014 t22 (+0.9338) | 1/31 | 0/31 | 27/31 |
+| sens_a@64 | +0.1675 | +0.1290 | +0.1474 | pallets__flask-5014 t22 (+0.7692) | 4/31 | 1/31 | 25/31 |
+| sens_a@128 | +0.1162 | +0.0778 | +0.1006 | pallets__flask-5014 t22 (+0.5871) | 8/31 | 2/31 | 20/31 |
+| sens_a@match | +0.0475 | +0.0272 | +0.0353 | pallets__flask-5014 t22 (+0.4129) | 16/31 | 7/31 | 6/31 |
+| sens_b@16 | +0.2993 | +0.2791 | +0.2721 | pallets__flask-5014 t22 (+1.1161) | 0/31 | 0/31 | 30/31 |
+| sens_b@32 | +0.2359 | +0.2059 | +0.2116 | pallets__flask-5014 t22 (+0.9638) | 0/31 | 0/31 | 29/31 |
+| sens_b@64 | +0.1828 | +0.1566 | +0.1618 | pallets__flask-5014 t22 (+0.8107) | 2/31 | 0/31 | 25/31 |
+| sens_b@128 | +0.1332 | +0.1092 | +0.1176 | pallets__flask-5014 t22 (+0.6014) | 5/31 | 1/31 | 23/31 |
+| sens_b@match | +0.0508 | +0.0336 | +0.0381 | pallets__flask-5014 t22 (+0.4295) | 12/31 | 7/31 | 8/31 |
+| spec_chain@16 | +0.2417 | +0.1911 | +0.2126 | pallets__flask-5014 t22 (+1.1150) | 2/31 | 2/31 | 27/31 |
+| spec_chain@32 | +0.1975 | +0.1290 | +0.1733 | pallets__flask-5014 t22 (+0.9228) | 5/31 | 2/31 | 25/31 |
+| spec_chain@64 | +0.1519 | +0.1079 | +0.1282 | pallets__flask-5014 t22 (+0.8635) | 7/31 | 4/31 | 23/31 |
+| spec_chain@128 | +0.1063 | +0.0590 | +0.0898 | pallets__flask-5014 t22 (+0.6009) | 7/31 | 2/31 | 18/31 |
+| spec_chain@match | +0.0291 | +0.0178 | +0.0259 | pallets__flask-5014 t22 (+0.1237) | 17/31 | 11/31 | 6/31 |
+| spec@16 | +0.0901 | +0.0819 | +0.0831 | pydata__xarray-4687 t44 (+0.2985) | 10/31 | 4/31 | 18/31 |
+| spec@32 | +0.0621 | +0.0376 | +0.0566 | pydata__xarray-4687 t44 (+0.2274) | 13/31 | 6/31 | 14/31 |
+| spec@64 | +0.0435 | +0.0324 | +0.0393 | pytest-dev__pytest-5787 t35 (+0.1669) | 14/31 | 9/31 | 12/31 |
+| spec@128 | +0.0294 | +0.0221 | +0.0256 | pytest-dev__pytest-5787 t35 (+0.1428) | 17/31 | 9/31 | 6/31 |
+| spec@match | +0.0164 | +0.0136 | +0.0137 | pytest-dev__pytest-5787 t35 (+0.0985) | 21/31 | 12/31 | 2/31 |
+| s2@16 | +0.0696 | +0.0551 | +0.0638 | pydata__xarray-4687 t44 (+0.2441) | 11/31 | 5/31 | 17/31 |
+| s2@32 | +0.0502 | +0.0430 | +0.0454 | pydata__xarray-4687 t44 (+0.1928) | 12/31 | 6/31 | 14/31 |
+| s2@64 | +0.0375 | +0.0340 | +0.0340 | pydata__xarray-4687 t44 (+0.1444) | 14/31 | 7/31 | 10/31 |
+| s2@128 | +0.0274 | +0.0235 | +0.0243 | pytest-dev__pytest-5787 t35 (+0.1221) | 18/31 | 9/31 | 5/31 |
+| s2@match | +0.0159 | +0.0118 | +0.0129 | pytest-dev__pytest-5787 t35 (+0.1075) | 22/31 | 12/31 | 2/31 |
+| s2sens_a@16 | +0.0669 | +0.0582 | +0.0613 | pydata__xarray-4687 t44 (+0.2357) | 11/31 | 5/31 | 17/31 |
+| s2sens_a@32 | +0.0491 | +0.0431 | +0.0442 | pydata__xarray-4687 t44 (+0.1952) | 12/31 | 7/31 | 14/31 |
+| s2sens_a@64 | +0.0368 | +0.0304 | +0.0334 | pydata__xarray-4687 t44 (+0.1404) | 13/31 | 6/31 | 8/31 |
+| s2sens_a@128 | +0.0271 | +0.0201 | +0.0242 | pytest-dev__pytest-5787 t35 (+0.1148) | 19/31 | 8/31 | 5/31 |
+| s2sens_a@match | +0.0168 | +0.0136 | +0.0139 | pytest-dev__pytest-5787 t35 (+0.1042) | 21/31 | 11/31 | 2/31 |
+| s2sens_b@16 | +0.0708 | +0.0517 | +0.0659 | pydata__xarray-4687 t44 (+0.2169) | 11/31 | 5/31 | 16/31 |
+| s2sens_b@32 | +0.0506 | +0.0448 | +0.0460 | pydata__xarray-4687 t44 (+0.1903) | 12/31 | 6/31 | 16/31 |
+| s2sens_b@64 | +0.0373 | +0.0272 | +0.0340 | pydata__xarray-4687 t44 (+0.1377) | 12/31 | 7/31 | 9/31 |
+| s2sens_b@128 | +0.0293 | +0.0228 | +0.0268 | pytest-dev__pytest-5787 t35 (+0.1049) | 17/31 | 8/31 | 8/31 |
+| s2sens_b@match | +0.0174 | +0.0116 | +0.0146 | pytest-dev__pytest-5787 t35 (+0.1023) | 21/31 | 12/31 | 2/31 |
+| oracle@16 | +0.0444 | +0.0372 | +0.0413 | pydata__xarray-4687 t44 (+0.1379) | 13/31 | 6/31 | 13/31 |
+| oracle@32 | +0.0363 | +0.0243 | +0.0332 | pytest-dev__pytest-5787 t35 (+0.1298) | 14/31 | 6/31 | 9/31 |
+| oracle@64 | +0.0299 | +0.0226 | +0.0269 | pytest-dev__pytest-5787 t35 (+0.1201) | 17/31 | 9/31 | 6/31 |
+| oracle@128 | +0.0257 | +0.0221 | +0.0232 | pytest-dev__pytest-5787 t35 (+0.1010) | 19/31 | 10/31 | 4/31 |
+| oracle@match | +0.0173 | +0.0156 | +0.0146 | pytest-dev__pytest-5787 t35 (+0.0988) | 20/31 | 12/31 | 2/31 |
+| s1_layer@16 | +0.2750 | +0.2374 | +0.2470 | pallets__flask-5014 t22 (+1.1144) | 1/31 | 0/31 | 28/31 |
+| s1_layer@32 | +0.2255 | +0.1927 | +0.2001 | pallets__flask-5014 t22 (+0.9861) | 1/31 | 0/31 | 27/31 |
+| s1_layer@64 | +0.1726 | +0.1289 | +0.1508 | pallets__flask-5014 t22 (+0.8274) | 2/31 | 1/31 | 25/31 |
+| s1_layer@128 | +0.1255 | +0.0797 | +0.1047 | pallets__flask-5014 t22 (+0.7507) | 8/31 | 3/31 | 19/31 |
+| s1_layer@match | +0.0473 | +0.0177 | +0.0309 | pallets__flask-5014 t22 (+0.5403) | 17/31 | 10/31 | 6/31 |
+
+## Prefill fetch
+
+Tool output prefilled with a top-128 fetch per chunk: fetch_all +0.0145 vs fetch_all_noprefill +0.0293; difference -0.0148 [-0.0240, -0.0060] (negative = the prefill fetch lifts the ceiling). Prefill fetch moves 84.1 MB per turn on average (0.043 of the bf16 history).
+
+## Bytes
+
+Per pause on average: bf16 history 2,243 MB; resident int1 0.138 and int2 0.200 of bf16; uniform int2's one-time extra reload over int1: 139 MB (0.062 of bf16).
+
+Moved per turn = bytes fetched at every step, summed over the turn's steps (no reuse across steps). Unique per turn = distinct (layer, head, token) pairs fetched over the turn (what a fetch cache would move). Both are shown as MB and as a multiple of int2's one-time extra reload on the same pause. Resident = int1 history + one step's fetched set, as a fraction of bf16, next to resident int2. spec also decodes one speculative token per step (compute, not bytes). Prefill-fetch bytes are not included here (see Prefill fetch).
+
+| scheme | moved / turn (MB) | x int2 extra | unique / turn (MB) | x int2 extra | resident | resident int2 |
+|---|---|---|---|---|---|---|
+| s1@16 | 86.9 | 0.78 | 27.6 | 0.25 | 0.1394 | 0.2004 |
+| s1@32 | 173.8 | 1.57 | 47.8 | 0.43 | 0.1405 | 0.2004 |
+| s1@64 | 347.6 | 3.13 | 81.7 | 0.72 | 0.1428 | 0.2004 |
+| s1@128 | 695.2 | 6.27 | 136.8 | 1.20 | 0.1473 | 0.2004 |
+| s1@match | 6,135.9 | 43.45 | 615.8 | 4.50 | 0.2004 | 0.2004 |
+| sens_a@16 | 86.9 | 0.78 | 27.7 | 0.25 | 0.1394 | 0.2004 |
+| sens_a@32 | 173.8 | 1.57 | 48.0 | 0.43 | 0.1405 | 0.2004 |
+| sens_a@64 | 347.6 | 3.13 | 82.0 | 0.73 | 0.1428 | 0.2004 |
+| sens_a@128 | 695.2 | 6.27 | 137.4 | 1.21 | 0.1473 | 0.2004 |
+| sens_a@match | 6,135.9 | 43.45 | 619.2 | 4.53 | 0.2004 | 0.2004 |
+| sens_b@16 | 86.9 | 0.78 | 26.8 | 0.24 | 0.1394 | 0.2004 |
+| sens_b@32 | 173.8 | 1.57 | 46.9 | 0.42 | 0.1405 | 0.2004 |
+| sens_b@64 | 347.6 | 3.13 | 80.8 | 0.72 | 0.1428 | 0.2004 |
+| sens_b@128 | 695.2 | 6.27 | 136.3 | 1.20 | 0.1473 | 0.2004 |
+| sens_b@match | 6,135.9 | 43.45 | 621.1 | 4.54 | 0.2004 | 0.2004 |
+| spec_chain@16 | 86.9 | 0.78 | 26.9 | 0.24 | 0.1394 | 0.2004 |
+| spec_chain@32 | 173.8 | 1.57 | 45.8 | 0.41 | 0.1405 | 0.2004 |
+| spec_chain@64 | 347.6 | 3.13 | 78.5 | 0.70 | 0.1428 | 0.2004 |
+| spec_chain@128 | 695.2 | 6.27 | 133.1 | 1.18 | 0.1473 | 0.2004 |
+| spec_chain@match | 6,135.9 | 43.45 | 613.4 | 4.50 | 0.2004 | 0.2004 |
+| spec@16 | 86.9 | 0.78 | 27.5 | 0.25 | 0.1394 | 0.2004 |
+| spec@32 | 173.8 | 1.57 | 47.6 | 0.43 | 0.1405 | 0.2004 |
+| spec@64 | 347.6 | 3.13 | 80.9 | 0.72 | 0.1428 | 0.2004 |
+| spec@128 | 695.2 | 6.27 | 135.1 | 1.19 | 0.1473 | 0.2004 |
+| spec@match | 6,135.9 | 43.45 | 607.8 | 4.46 | 0.2004 | 0.2004 |
+| s2@16 | 86.9 | 0.78 | 27.5 | 0.25 | 0.1394 | 0.2004 |
+| s2@32 | 173.8 | 1.57 | 47.4 | 0.43 | 0.1405 | 0.2004 |
+| s2@64 | 347.6 | 3.13 | 80.6 | 0.72 | 0.1428 | 0.2004 |
+| s2@128 | 695.2 | 6.27 | 134.7 | 1.19 | 0.1473 | 0.2004 |
+| s2@match | 6,135.9 | 43.45 | 606.8 | 4.45 | 0.2004 | 0.2004 |
+| s2sens_a@16 | 86.9 | 0.78 | 27.6 | 0.25 | 0.1394 | 0.2004 |
+| s2sens_a@32 | 173.8 | 1.57 | 47.5 | 0.43 | 0.1405 | 0.2004 |
+| s2sens_a@64 | 347.6 | 3.13 | 80.8 | 0.72 | 0.1428 | 0.2004 |
+| s2sens_a@128 | 695.2 | 6.27 | 135.0 | 1.19 | 0.1473 | 0.2004 |
+| s2sens_a@match | 6,135.9 | 43.45 | 607.4 | 4.45 | 0.2004 | 0.2004 |
+| s2sens_b@16 | 86.9 | 0.78 | 26.7 | 0.24 | 0.1394 | 0.2004 |
+| s2sens_b@32 | 173.8 | 1.57 | 46.6 | 0.42 | 0.1405 | 0.2004 |
+| s2sens_b@64 | 347.6 | 3.13 | 79.8 | 0.71 | 0.1428 | 0.2004 |
+| s2sens_b@128 | 695.2 | 6.27 | 134.3 | 1.19 | 0.1473 | 0.2004 |
+| s2sens_b@match | 6,135.9 | 43.45 | 610.1 | 4.47 | 0.2004 | 0.2004 |
+| oracle@16 | 86.9 | 0.78 | 29.3 | 0.26 | 0.1394 | 0.2004 |
+| oracle@32 | 173.8 | 1.57 | 50.6 | 0.45 | 0.1405 | 0.2004 |
+| oracle@64 | 347.6 | 3.13 | 85.7 | 0.76 | 0.1428 | 0.2004 |
+| oracle@128 | 695.2 | 6.27 | 142.3 | 1.25 | 0.1473 | 0.2004 |
+| oracle@match | 6,135.9 | 43.45 | 627.9 | 4.60 | 0.2004 | 0.2004 |
+| s1_layer@16 | 86.9 | 0.78 | 33.5 | 0.30 | 0.1394 | 0.2004 |
+| s1_layer@32 | 173.8 | 1.57 | 56.7 | 0.51 | 0.1405 | 0.2004 |
+| s1_layer@64 | 347.6 | 3.13 | 94.5 | 0.84 | 0.1428 | 0.2004 |
+| s1_layer@128 | 695.2 | 6.27 | 154.9 | 1.36 | 0.1473 | 0.2004 |
+| s1_layer@match | 6,135.9 | 43.45 | 653.8 | 4.77 | 0.2004 | 0.2004 |
+
+wrote results/gate_fetch/llama-3.1-8b-instruct-base1-pf128-self-T0/summary.md
+loading unsloth/Llama-3.1-8B-Instruct
+Loading weights:   0%|          | 0/291 [00:00<?, ?it/s]Loading weights: 100%|██████████| 291/291 [00:00<00:00, 9351.31it/s]
+11 rows on base int1, prefill fetch k=128: bf16, int1, oracle, s1, s2
+estimated peak GPU memory 30.5 GB (11 rows, base int1, largest pause pydata__xarray-4687 t85 with 32285 history tokens); card 47.7 GB
+self targets: bf16 model, temperature 0, seed 0, up to 64 tokens, eos [128001, 128008, 128009]; 1 saved in results/gate_fetch/llama-3.1-8b-instruct-base1-pf128-self-T0/self_targets.jsonl, 0 to generate
+self targets: 41-41 tokens (mean 41.0)
+[transformers] Ignoring clean_up_tokenization_spaces=True for BPE tokenizer TokenizersBackend. The clean_up_tokenization post-processing step is designed for WordPiece tokenizers and is destructive for BPE (it strips spaces before punctuation). Set clean_up_tokenization_spaces=False to suppress this warning, or set clean_up_tokenization_spaces_for_bpe_even_though_it_will_corrupt_output=True to force cleanup anyway.
+# Fetch diagnostics: pydata__xarray-4687 turn 85
+
+Base int1. History 32285 tokens, 41 teacher-forced steps. `int2` below means the base (int1). Masses are attention probability over the history middle (the quantized tokens), averaged over query heads, KV heads and layers: `fetched (actual)` = mass on the fetched set in the row's own attention after fetching; `fetched (bf16)` = mass the current bf16 attention puts on the fetched set; `oracle (bf16)` = the same for the best set of that size; `middle int2 / bf16` = total mass on the middle.
+
+| scheme | dNLL vs bf16 | dNLL vs int1 | steps worse than int1 by > 0.5 nats |
+|---|---|---|---|
+| bf16 | +0.0000 | -0.6602 | 1 |
+| int1 | +0.6602 | +0.0000 | 0 |
+| s1@16 | +0.4516 | -0.2086 | 0 |
+| s1@64 | +0.3150 | -0.3452 | 0 |
+| s1@128 | +0.1913 | -0.4689 | 0 |
+| s2@16 | +0.1454 | -0.5149 | 1 |
+| s2@64 | +0.0686 | -0.5917 | 0 |
+| s2@128 | +0.0478 | -0.6125 | 0 |
+| oracle@16 | +0.1232 | -0.5371 | 1 |
+| oracle@64 | +0.0683 | -0.5919 | 1 |
+| oracle@128 | +0.0445 | -0.6157 | 1 |
+
+wrote results/gate_fetch/llama-3.1-8b-instruct-base1-pf128-self-T0/diag_pydata__xarray-4687_t85

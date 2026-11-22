@@ -17,7 +17,8 @@ overwritten with their bf16 originals. Block 0 and the last 64 tokens are always
 ever dropped. Target model: Llama-3.1-8B-Instruct. Built as a plain vLLM 0.27.1 KV-connector
 plugin: no fork, no custom kernels. **The gate rejected this design (NO-GO, below);** current work asks
 whether per-step fetching of bf16 tokens on a low-bit base (SpeCache-style) can beat uniform low-bit reload
-(so far: no, on either base; run 3 tests prefill fetch and a fixed speculative token).
+(run 4: on the int1 base with a large prefill fetch, yes vs. uniform int2 at equal memory, CI below 0, but moving
+~42x the bytes; int2 + fetch vs. int3 is only a tie).
 
 ## History (why the design looks like this)
 
@@ -118,21 +119,36 @@ token; a correct guess gives exactly s2's set) and `spec_chain` (SpeCache's chai
 - Cost: @match moves 5.9 GB/turn (42x the 139 MB one-time extra reload), ~620 MB unique; prefill fetch 84 MB/turn.
 - Noise: base-2 noise_ctrl s.d. 0.0039; base-1 noise_ctrl mean +0.0027 (CI above 0, as in run 2), s.d. 0.0073.
 
-### Next run: fetch study run 4 (code ready, not run yet)
+### Per-step fetch study, run 4 (`kv_manager/results/gate_fetch/llama-3.1-8b-instruct-base1-{pf512,pf128-self-T0,pf128-self-T0.7}/`)
 
-Great Lakes A40, `greatlakes_fetch.sbatch` default JOBS = three base-1 jobs, each its own run id and folder:
-`1:512` (prefill fetch 512, real targets; `-base1-pf512`), `1:128:self:0` and `1:128:self:0.7` (`-base1-pf128-self-T0`,
-`-self-T0.7`). Self targets (`run_fetch --target-source self --temperature T --seed 0`): the bf16 model writes ≤64
-tokens per pause (bf16 prefill of history + tool output; greedy at T=0, else sampled with a per-pause seed),
-saved in `self_targets.jsonl` before any row runs and reused on rerun/resume. All rows teacher-forced on them;
-spec guesses stay the compressed row's greedy prediction. Every row now records `kl_bf16` (KL from the bf16 row's
-next-token distribution, mean over steps); the summary reports it next to ΔNLL. No int3 join (no base-2 job).
-CPU checks only so far.
+Great Lakes A40, run ids `20261121-154503-b1-*`, three base-1 jobs (41.6-44.2 min each), 31/31 pauses, peak 38.7-38.8 GB
+(est. 37.1), no int3 (no base-2 job). Logs in `gate_fetch/fetch_logs_run4/`. Each job hit one recovered CUDA allocator
+OOM warning on sympy t72 (33.8k, 0.33 GB free; run 3 had the same): no headroom on an A40 for anything larger.
+Self targets (`--target-source self --temperature T --seed 0`): bf16 writes ≤64 tokens per pause after a bf16 prefill,
+saved in `self_targets.jsonl`; `kl_bf16` = KL(bf16 row || row), mean over steps.
+- First significant fetch win: s2@match vs. uniform int2 at equal memory has its CI entirely below 0 in all three jobs.
+  pf512 (real targets): +0.0081 vs. int2 +0.0302, −0.0221 [−0.0415, −0.0044], KL −0.0196 [−0.0297, −0.0123], lower KL
+  on 29/31. Self T=0: −0.0174 [−0.0284, −0.0061]; T=0.7: −0.0210 [−0.0330, −0.0077]. s2sens_a/b, oracle and spec @match
+  are the same; s1/sens/s1_layer no better than int2.
+- pf512 vs. run 3's pf128 (int1/int2/noise_ctrl rows bit-identical, so exact pairing): every row better, e.g. fetch_all
+  −0.0077 [−0.0129, −0.0028] (now +0.0089), s2@match −0.0098 [−0.0148, −0.0049], s2@16 −0.0242. Prefill fetch moves
+  336 MB/turn (2.4x int2's 139 MB one-time extra reload) vs. 84 MB at k=128.
+- At 74% of int2's memory (k=128, resident 0.147): s2sens_b@128 −0.0167 [−0.0381, +0.0038] (pf512), −0.0040
+  [−0.0158, +0.0072] (self T0), −0.0096 [−0.0243, +0.0060] (self T0.7): upper bounds inside the gate's +0.01 "not worse"
+  bound (an analogy: the gate rule counts bytes moved, these move 680 MB/turn + prefill). s2@128 pf512 misses (+0.0116).
+- Self targets: bf16 NLL/token 0.24 (T0) / 0.36 (T0.7) vs. 0.74 on the Gemini targets, so those are off-distribution;
+  but int2's damage is similar (+0.033 / +0.036 vs. +0.030) and the scheme ranking is unchanged. Per-pause rankings
+  correlate weakly with real targets (Spearman 0.3-0.5); outliers move (flask t22, pytest t35, sympy t72, not xarray t85).
+  Targets 20-64 tokens (mean 43.5 / 42.6), 6/31 and 4/31 hit the cap.
+- spec guesses right 98% (T0) / 89% (T0.7) at match vs. 82% on real targets; spec@match = s2 then (+0.0005 / +0.0031),
+  but spec@16 still +0.020 behind s2 at T0. spec_chain 24-56%.
+- Noise: self-target noise_ctrl s.d. 0.0124 / 0.0122 (2x real), mean +0.0045 / +0.0051 (CI above 0); KL is cleaner.
+- Cost unchanged: @match moves 5.7-6.1 GB/turn (42-43x int2's extra reload), ~600 MB unique (4.5x).
 
 ## GPU situation
 
 - Great Lakes (UMich, Slurm, partition spgpu): A40 48 GB (~47.5 GB usable). Ran the gate, the uniform-only gate and
-  the first fetch run and fetch run 3; next: fetch run 4. All three `greatlakes*.sbatch` files take the Slurm
+  the first fetch run and fetch runs 3 and 4. All three `greatlakes*.sbatch` files take the Slurm
   account from `ACCOUNT=<your_account>` and submit themselves; no account is hard-coded. `greatlakes_fetch.sbatch` submits one
   job per `JOBS` entry `BASE:PREFILL_K[:self:T]` (default run 4: "1:512 1:128:self:0 1:128:self:0.7"; run 3 was
   "2:128 1:128"), each with its own run id `<stamp>-<job>` (e.g. `-b1-pf128-self-T0.7`) and folder; 3 h limit,
@@ -179,6 +195,7 @@ CPU checks only so far.
 | `gate_fetch/llama-3.1-8b-instruct/` | first fetch run (int2 base, 29 rows) + `gate_fetch/kv-gate-fetch-66088085.log` |
 | `gate_fetch/<model>-base<b>[-pf<K>][-self-T<T>]/` | fetch runs 2+ (base 2 / base 1, optional prefill fetch, optional self-written targets): metrics.csv (kl_bf16 from run 4), samples.csv, summary.md, spec_guesses.csv (run 3+), self_targets.jsonl (self targets), run_id.txt (Great Lakes); `diag_<instance>_t<turn>/` inside for `--diagnose` (fetch_idx.pt is git-ignored) |
 | `gate_fetch/llama-3.1-8b-instruct-base{2,1}-pf128/`, `fetch_logs_run3/` | fetch run 3 (A40, prefill fetch 128) and its Slurm logs |
+| `gate_fetch/llama-3.1-8b-instruct-base1-{pf512,pf128-self-T0,pf128-self-T0.7}/`, `fetch_logs_run4/` | fetch run 4 (A40, base 1: prefill fetch 512; self targets T=0 / 0.7) and its Slurm logs |
 | `gate_fetch/llama-3.1-8b-instruct-base{2,1}/`, `fetch_logs/` | fetch run 2 (2x A100 80 GB, no prefill fetch) and its logs + environment report |
 | `gate_fetch_smoke/<name>/`, `gate_smoke/` | one-pause smoke checks |
 | `gate_fetch/.status-*` | CloudLab / local / Great Lakes completion markers (git-ignored) |
@@ -186,7 +203,7 @@ CPU checks only so far.
 The fetch results were first committed under the repo-root `results/gate_fetch/` and then moved here
 (`22cd4ce`).
 
-## Status (as of 21 Nov 2026)
+## Status (as of 22 Nov 2026)
 
 | Piece | State |
 |---|---|
@@ -196,7 +213,7 @@ The fetch results were first committed under the repo-root `results/gate_fetch/`
 | Per-step fetch study v1 (int2 base) | Done: nothing beats uniform int3 |
 | Per-step fetch study run 2 (spec, base 1, equal memory, diagnostics; no prefill fetch) | Done (2x A100 80 GB): nothing beats uniform int(b+1) at equal memory |
 | Per-step fetch study run 3 (prefill fetch 128, anchored spec + spec_chain, guess log) | Done (A40): base 2 ties int3; base 1 beats int2 on the mean, not significantly |
-| Per-step fetch study run 4 (base 1: prefill fetch 512; self-written targets T=0 / 0.7; KL) | Built and CPU-tested; Great Lakes A40, three jobs |
+| Per-step fetch study run 4 (base 1: prefill fetch 512; self-written targets T=0 / 0.7; KL) | Done (A40): s2@match beats int2 at equal memory, CI below 0, in all three jobs; ~42x the bytes moved |
 | M1: connector with uniform reload | Built, unit tests pass on CPU, never run on a GPU |
 | M2: draft scoring inside the connector | Skipped (gate NO-GO) |
 | M3: full replay benchmark + quality via forced decoding | Planned |
