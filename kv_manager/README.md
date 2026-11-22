@@ -124,7 +124,9 @@ python -m experiments.gate.summarize_fetch --dir results/gate_fetch/<model>-base
 #              one A40 job per JOBS entry BASE:PREFILL_K[:self:T] (default, run 4: "1:512 1:128:self:0
 #              1:128:self:0.7"; run 3 was "2:128 1:128"), each with its own run id; base 1 without int3, joined
 #              from a base-2 job with the same prefill k and targets in the same submission, if any. The submit
-#              prints each job's resume command (RESUME=1 RUN_ID=<job's id> JOBS="<entry>").
+#              prints each job's resume command (RESUME=1 RUN_ID=<job's id> JOBS="<entry>"). Output goes to the
+#              git-ignored results/cluster/ (so git pull never conflicts); copy results/cluster/*.tgz home and
+#              unpack with: tar xzf fetch_study_results_<run id>.tgz -C results/
 # Any Linux + A100s: bash experiments/gate/local_fetch.sh   (detects GPUs; see docs/RUNBOOK_fetch_study.md)
 # CloudLab:    bash experiments/gate/cloudlab_fetch.sh   (base 2 and base 1 in parallel on GPUs 0 and 1, one tmux
 #              window each; base 1 skips the int3 copy to fit 40 GB and its summary joins int3 from base 2

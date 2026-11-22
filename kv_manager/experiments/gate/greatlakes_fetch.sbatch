@@ -19,7 +19,13 @@
 #
 # Every job runs: a one-pause smoke check (stops the job if per-step decoding and sdpa teacher forcing disagree by
 # more than CHECK_NLL_TOL nats in either row's NLL), the full run, its summary, and the per-step diagnostic of one
-# pause (MODE: full | diagnose | both, default both), then packs results/fetch_study_results_<run id>.tgz.
+# pause (MODE: full | diagnose | both, default both), then packs results/cluster/fetch_study_results_<run id>.tgz.
+# Output goes to the git-ignored RESULTS_ROOT (default results/cluster/): <root>/gate_fetch/<name>,
+# <root>/gate_fetch_smoke/<name>, status markers and the .tgz, so committed results under results/gate_fetch/
+# never collide with a job's files and `git pull` on the cluster keeps working. The .tgz holds paths relative to
+# the root (gate_fetch/<name>, gate_fetch_smoke/<name>, gate_fetch/fetch_logs_<run id>/ with the Slurm log);
+# unpack it on your own machine with:  tar xzf fetch_study_results_<run id>.tgz -C results/
+# (RESULTS_ROOT=results resumes a run started before this layout.)
 # Rows, all in the same run: bf16, the uniform base, uniform references (base 2: int3; base 1: int2), fetch_all,
 # fetch_all_noprefill, noise_ctrl, and per k in 16/32/64/128/match: s1, s2, spec, spec_chain (each with its
 # speculative shadow), sens_a, sens_b, s2sens_a, s2sens_b, oracle, s1_layer. Every row also records the KL from
@@ -56,6 +62,7 @@ CHECK_NLL_TOL="${CHECK_NLL_TOL:-0.05}"
 RESUME="${RESUME:-0}"
 JOBS="${JOBS:-1:512 1:128:self:0 1:128:self:0.7}"
 SEED="${SEED:-0}"
+RESULTS_ROOT="${RESULTS_ROOT:-results/cluster}"
 slug=$(basename "$TARGET" | tr '[:upper:]' '[:lower:]')
 
 # parse one JOBS entry into b, pf, src, temp, suffix (job name part) and name (results folder)
@@ -94,7 +101,7 @@ if [ -z "${SLURM_JOB_ID:-}" ]; then
     if [ "${#specs[@]}" = 1 ] && [ -n "${RUN_ID:-}" ]; then rid[$i]="$RUN_ID"; else rid[$i]="$group-$suffix"; fi
     key[$i]="$pf|$src|$temp"
   done
-  export TARGET MODE DIAG_PAUSE CHECK_NLL_TOL RESUME SEED
+  export TARGET MODE DIAG_PAUSE CHECK_NLL_TOL RESUME SEED RESULTS_ROOT
   echo ">> submitting ${#specs[@]} job(s), one A40 each:"
   for i in "${!specs[@]}"; do
     spec="${specs[$i]}"
@@ -109,7 +116,7 @@ if [ -z "${SLURM_JOB_ID:-}" ]; then
     parse_job "$spec"
     jid=$(JOB="$spec" JOB_RUN_ID="${rid[$i]}" PARTNER_RUN_ID="$partner_id" PARTNER_JOB="$partner_spec" \
           sbatch --parsable --account="$ACCOUNT" --job-name="kv-fetch-$suffix" --export=ALL "$0" "$@")
-    echo "   $spec -> job $jid, run id ${rid[$i]}, results/gate_fetch/$name, log kv-fetch-$suffix-$jid.log"
+    echo "   $spec -> job $jid, run id ${rid[$i]}, $RESULTS_ROOT/gate_fetch/$name, log kv-fetch-$suffix-$jid.log"
     [ -n "$partner_id" ] && echo "      int3 join partner: $partner_spec (run id $partner_id)"
     echo "      resume: ACCOUNT=$ACCOUNT RESUME=1 RUN_ID=${rid[$i]} JOBS=\"$spec\"" \
          "${partner_id:+PARTNER_RUN_ID=$partner_id PARTNER_JOB=\"$partner_spec\" }bash $0"
@@ -125,10 +132,10 @@ source ~/gate-venv/bin/activate
 export HF_HUB_OFFLINE=1
 nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv
 parse_job "$JOB"
-out="results/gate_fetch/$name"
-smoke="results/gate_fetch_smoke/$name"
-mark="results/gate_fetch/.status-$JOB_RUN_ID"
-mkdir -p results/gate_fetch
+out="$RESULTS_ROOT/gate_fetch/$name"
+smoke="$RESULTS_ROOT/gate_fetch_smoke/$name"
+mark="$RESULTS_ROOT/gate_fetch/.status-$JOB_RUN_ID"
+mkdir -p "$RESULTS_ROOT/gate_fetch"
 trap 'touch "$mark.failed"' ERR
 
 common=(--target "$TARGET" --base-bits "$b")
@@ -138,12 +145,16 @@ common=(--target "$TARGET" --base-bits "$b")
 echo ">> run $JOB_RUN_ID ($JOB): base int$b, prefill fetch k $pf, $src targets$([ "$src" = self ] && echo " T=$temp seed $SEED")," \
      "on $(hostname): $out ($(date))"
 
-pack() {   # pack <run id> <folder> <smoke folder> <job suffix>
+pack() {   # pack <run id> <folder> <smoke folder> <job suffix>; paths in the archive are relative to RESULTS_ROOT
   shopt -s nullglob
-  local logs=(kv-fetch-"$4"-[0-9]*.log)
-  tar czf "results/fetch_study_results_$1.tgz" "$2" $( [ -d "$3" ] && echo "$3" ) "${logs[@]}"
+  local logs=(kv-fetch-"$4"-[0-9]*.log) logdir="gate_fetch/fetch_logs_$1" items
+  mkdir -p "$RESULTS_ROOT/$logdir"
+  [ "${#logs[@]}" -gt 0 ] && cp "${logs[@]}" "$RESULTS_ROOT/$logdir/"
+  items=("${2#"$RESULTS_ROOT"/}" "$logdir")
+  [ -d "$3" ] && items+=("${3#"$RESULTS_ROOT"/}")
+  tar czf "$RESULTS_ROOT/fetch_study_results_$1.tgz" -C "$RESULTS_ROOT" "${items[@]}"
   shopt -u nullglob
-  echo ">> packed results/fetch_study_results_$1.tgz"
+  echo ">> packed $RESULTS_ROOT/fetch_study_results_$1.tgz (unpack locally with: tar xzf <file> -C results/)"
 }
 
 if [ "$MODE" = full ] || [ "$MODE" = both ]; then
@@ -172,8 +183,8 @@ elif [ -z "${PARTNER_RUN_ID:-}" ]; then
 else
   me_b="$b"; me_out="$out"; me_name="$name"; me_suffix="$suffix"; me_smoke="$smoke"
   parse_job "$PARTNER_JOB"
-  p_out="results/gate_fetch/$name"; p_smoke="results/gate_fetch_smoke/$name"; p_suffix="$suffix"
-  if [ ! -e "results/gate_fetch/.status-$PARTNER_RUN_ID.done" ]; then
+  p_out="$RESULTS_ROOT/gate_fetch/$name"; p_smoke="$RESULTS_ROOT/gate_fetch_smoke/$name"; p_suffix="$suffix"
+  if [ ! -e "$RESULTS_ROOT/gate_fetch/.status-$PARTNER_RUN_ID.done" ]; then
     echo ">> base int$me_b done; the int3 join is written when $PARTNER_JOB (run id $PARTNER_RUN_ID) finishes"
   elif [ "$(cat "$p_out/run_id.txt" 2>/dev/null)" != "$PARTNER_RUN_ID" ] \
        || [ "$(cat "$me_out/run_id.txt" 2>/dev/null)" != "$JOB_RUN_ID" ]; then

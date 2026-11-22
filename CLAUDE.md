@@ -154,7 +154,9 @@ saved in `self_targets.jsonl`; `kl_bf16` = KL(bf16 row || row), mean over steps.
   "2:128 1:128"), each with its own run id `<stamp>-<job>` (e.g. `-b1-pf128-self-T0.7`) and folder; 3 h limit,
   ~39 GB peak; run 3 took ~43 min per job. It prints each job's resume command (`RESUME=1 RUN_ID=<job's id>
   JOBS="<entry>"`). A base-1 job joins int3 only from a base-2 job with the same prefill k and targets in the same
-  submission (run ids checked); each job packs `results/fetch_study_results_<run id>.tgz` (git-ignored).
+  submission (run ids checked). Jobs write to the git-ignored `RESULTS_ROOT` (default `results/cluster/`: gate_fetch/,
+  gate_fetch_smoke/, status markers, `fetch_study_results_<run id>.tgz` with the Slurm log in `gate_fetch/fetch_logs_<run id>/`),
+  so `git pull` on the cluster never meets untracked result files; unpack locally with `tar xzf <tgz> -C results/`.
 - CloudLab d8545 (Nov 2026): 4x A100 40 GB (~42.5 GB usable). `cloudlab_fetch.sh` (plain bash + tmux, venv and
   HF_HOME on /mydata) runs base 2 on GPU 0 and base 1 on GPU 1 in parallel; base 1 skips the int3 history copy
   (`--uniform-refs 2`) to fit, and its summary joins int3 from base 2 (`summarize_fetch --join`). Estimated

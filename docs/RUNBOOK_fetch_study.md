@@ -1,10 +1,10 @@
-# Runbook: per-step fetch study (runs 2 and 3)
+# Runbook: per-step fetch study (runs 2 to 4)
 
-> **Status (21 Nov 2026).** Run 2 is done: it ran on 2 × A100 80 GB with this runbook, and the results are
+> **Status (22 Nov 2026).** Run 2 is done: it ran on 2 × A100 80 GB with this runbook, and the results are
 > committed (`kv_manager/results/gate_fetch/llama-3.1-8b-instruct-base2/` and `-base1/`). Run 3 runs on the
 > project's Slurm cluster (`experiments/gate/greatlakes_fetch.sbatch`), not with this runbook; it is done
 > (`-base2-pf128/`, `-base1-pf128/`). Run 4 (base 1: prefill fetch 512, and self-written targets at temperature
-> 0 and 0.7) also runs there. Part B still works for repeating a run on another Linux machine. It now also runs
+> 0 and 0.7) also ran there and is done (`-base1-pf512/`, `-base1-pf128-self-T0/`, `-base1-pf128-self-T0.7/`). Part B still works for repeating a run on another Linux machine. It now also runs
 > run 3's corrected speculative-token rows, but without prefill fetch or self-written targets.
 
 For someone running the next experiment on their own Linux machine with NVIDIA A100s or RTX A6000s (a shared
@@ -71,6 +71,19 @@ CI that includes 0. "Fetch everything" on the 1-bit base is still +0.0165, so th
 **Run 4 (Slurm cluster, base 1 only)** tests two explanations: a larger prefill fetch (512 tokens per chunk), and
 targets written by the model itself (greedy and temperature 0.7) instead of the agent's recorded messages, with
 the KL from the bf16 model reported next to ΔNLL.
+
+**Run 4 found** (A40s, 31 pauses per job, about 43 min each):
+- **1-bit + fetch now beats uniform 2-bit at equal memory**, with the 95% CI entirely below 0 in all three jobs.
+  Current-step selection (s2) at equal memory: −0.0221 [−0.0415, −0.0044] vs. 2-bit with the 512-token prefill
+  fetch; −0.0174 and −0.0210 on the model's own text at temperature 0 and 0.7. KL agrees, with tighter CIs.
+- **The larger prefill fetch helps every row** (paired with run 3, whose controls are bit-identical): "fetch
+  everything" improves by −0.0077 to +0.0089, s2 at equal memory by −0.0098. It moves 336 MB per tool output
+  instead of 84 MB.
+- **Self-written targets don't change the conclusions.** The model finds its own text far likelier (NLL 0.24 /
+  0.36 per token vs. 0.74 on the recorded messages), but 2-bit's damage and the ranking of schemes stay the same.
+  The speculative token guesses right 98% / 89% of the time there (82% on the recorded messages).
+- **Cost:** fetching at equal memory moves about 6 GB per turn (about 600 MB of distinct tokens), against 2-bit's
+  one-time extra reload of 139 MB. No uniform 3-bit row was run, so 1-bit + fetch vs. 3-bit is untested.
 
 **Why it matters.** These runs decide how the project's final system reloads KV after a tool call: either plain
 uniform low-bit reload (already built), or a per-step fetch path, which is worth building only if it beats uniform

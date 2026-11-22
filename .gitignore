@@ -17,3 +17,7 @@ __pycache__/
 # packed run archives and per-step fetch index dumps (large; the CSVs/summaries are committed instead)
 /kv_manager/results/*.tgz
 /kv_manager/results/**/fetch_idx.pt
+# cluster job output (greatlakes_fetch.sbatch RESULTS_ROOT) and Slurm logs in kv_manager/
+/kv_manager/results/cluster/
+/kv_manager/kv-fetch-*.log
+/kv_manager/kv-gate-*.log
