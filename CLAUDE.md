@@ -158,7 +158,11 @@ the exact tests, in every run-5 `summary.md`; `summarize_fetch --rules` writes `
 job): R1 wtd3 vs spec_chain @128 (A1+B1); R2 k2v1 vs int1 scoring gap and @match (C); R3 s2_pool_Mmatch@64/128 vs
 s2@match, CI upper < 2 s.d. noise and ≤ 2x int2's extra reload moved (A2; B2 for information); R4
 s2_pool_Mhalf@64 vs int2, CI upper < +0.01 and ≤ 2x moved (A2+B2). Union rows are diagnostic only. Estimated peaks
-36.1-36.6 GB (k2v1 shares the int2 keys / int1 values tensors); ~40-65 min per job; 4 h limit. CPU checks only.
+36.1-36.6 GB (k2v1 shares the int2 keys / int1 values tensors); ~40-65 min per job; 4 h limit. Submitted as group
+`20261122-122404`: A1/A2/B1/B2 finished; C failed on its 9th pause (s2_pool_Mhalf@128: k2v1's M = k_match//2 is
+123-126 on short pauses). C's row set now has s2_pool_Mhalf only at 16/64 (min M 123; Mmatch min 247), run_fetch
+checks k <= M for every pool row on every pause before starting (no clamping), and C is rerun from scratch with
+RULES_JOBS = the four finished jobs, so it writes `rules_run5_20261122-122404.md`.
 
 ## GPU situation
 

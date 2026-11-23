@@ -81,8 +81,9 @@ from pathlib import Path
 import torch
 
 from experiments.gate import data
-from experiments.gate.fetch_attn import (MATCH, ROW_SETS, Row, default_rows, diagnostic_rows, estimate_peak_bytes,
-                                        generate_self_target, run_pause, spec_family, study_rows)
+from experiments.gate.fetch_attn import (MATCH, POOL, ROW_SETS, Row, default_rows, diagnostic_rows,
+                                        estimate_peak_bytes, generate_self_target, resolve_rows, run_pause,
+                                        spec_family, study_rows)
 from experiments.gate.run_gate import ROOT, _append, load_model, model_slug, read_pauses
 
 DIAG_DEFAULT = "pydata__xarray-4687:85"
@@ -108,6 +109,30 @@ def memory_report(cfg, weight_bytes, rows, samples, args, card_bytes):
         print(f"WARNING: estimated peak {peak / GB:.1f} GB exceeds 95% of the card ({card_bytes / GB:.1f} GB). "
               "Drop a uniform reference (--uniform-refs), use fewer ks, or a larger GPU.", flush=True)
     return peak
+
+
+def pool_check(cfg, rows, samples, args):
+    """Before any pause runs: resolve every pool row on every pause (k_match per row's base) and stop if any has
+    k > M (k is never clamped). Prints the smallest M of each pool row over the pauses."""
+    pool = [r for r in rows if r.policy in POOL and not r.shadow]
+    if not pool or not samples:
+        return
+    L, kvh = cfg.num_hidden_layers, cfg.num_key_value_heads
+    d = getattr(cfg, "head_dim", None) or cfg.hidden_size // cfg.num_attention_heads
+    lab = lambda r: f"{r.name}@{'match' if r.k == MATCH else r.k}"
+    min_m, bad = {}, []
+    for inst, s in samples:
+        res, probs = resolve_rows(pool, len(s["hist_ids"]), args.block, args.recent, kvh, d, L)
+        for r0, r in zip(pool, res):
+            key = lab(r0)
+            if key not in min_m or r.pool < min_m[key][0]:
+                min_m[key] = (r.pool, r.k, f"{inst} t{s['turn']}")
+        bad += [f"{inst} t{s['turn']}: {x}" for x in probs]
+    print("pool rows, smallest M over the pauses (k): " + ", ".join(f"{k_} M {m} (k {k}, {w})"
+                                                                   for k_, (m, k, w) in min_m.items()), flush=True)
+    if bad:
+        raise SystemExit(f"{len(bad)} pool row(s) would have k > M (k is never clamped); fix the row set before "
+                         f"running. First: " + "; ".join(bad[:5]))
 
 
 def pause_seed(seed: int, instance_id: str, turn: int) -> int:
@@ -392,7 +417,9 @@ def main():
         fmt = data.chat_format(cfg.model_type)
         max_ctx = fmt.native_context if args.max_context is None else args.max_context
         samples = load_samples(AutoTokenizer.from_pretrained(args.target), fmt, max_ctx)
-        memory_report(cfg, weight_bytes, rows_for(), samples, args, card)
+        rows = rows_for()
+        pool_check(cfg, rows, samples, args)
+        memory_report(cfg, weight_bytes, rows, samples, args, card)
         return
 
     print(f"loading {args.target}", flush=True)
@@ -405,6 +432,7 @@ def main():
     print(f"{len(rows)} rows on base {base}{f', prefill fetch k={args.prefill_fetch_k}' if pf else ''}: "
           f"{', '.join(sorted({r.name for r in rows}))}" + ("" if diag else f"; ks {args.ks}"), flush=True)
     samples = load_samples(tok, fmt, max_ctx)
+    pool_check(model.config, rows, samples, args)
     weight_bytes = sum(t.numel() * t.element_size() for t in model.parameters())
     memory_report(model.config, weight_bytes, rows, samples, args, card)
     if self_tgt:

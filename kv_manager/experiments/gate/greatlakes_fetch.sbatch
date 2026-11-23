@@ -17,6 +17,9 @@
 #   ACCOUNT=<your_account> JOBS="1:128:rows=a1" bash experiments/gate/greatlakes_fetch.sbatch   # one job
 #   ACCOUNT=<your_account> MODE=diagnose bash experiments/gate/greatlakes_fetch.sbatch          # diagnostic only
 #   ACCOUNT=<your_account> RESUME=1 RUN_ID=<job's run id> JOBS="<its entry>" bash experiments/gate/greatlakes_fetch.sbatch
+#   ACCOUNT=<your_account> JOBS="<entry>" RULES_JOBS="<run id>=<folder> ..." RULES_GROUP=<group> bash ...
+#       rerun one run-5 job from scratch (new run id) and still write the combined rules: RULES_JOBS lists the
+#       finished jobs of the earlier submission; the rerun's own entry replaces the one with the same folder
 #       continue one job after a timeout (printed at submission; self-written targets are reloaded from the
 #       folder's self_targets.jsonl, so the resumed pauses use exactly the same targets)
 #
@@ -125,8 +128,16 @@ if [ -z "${SLURM_JOB_ID:-}" ]; then
     # run-5 jobs of this submission: the last one to finish writes the combined decision rules
     [ "$rows" != default ] && rules_list="$rules_list ${rid[$i]}=$name"
   done
-  rules_list="${RULES_JOBS:-${rules_list# }}"
-  [ "${#specs[@]}" -gt 1 ] || [ -n "${RULES_JOBS:-}" ] || rules_list=""   # a single job alone: no combined rules
+  rules_list="${rules_list# }"
+  if [ -n "${RULES_JOBS:-}" ]; then
+    # finished jobs of an earlier submission (run id=folder); this submission's jobs replace any with the same folder
+    for e in $RULES_JOBS; do
+      case " $rules_list " in *"=${e#*=} "*) ;; *) rules_list="$e${rules_list:+ $rules_list}" ;; esac
+    done
+  elif [ "${#specs[@]}" = 1 ]; then
+    rules_list=""   # a single job alone: no combined rules
+  fi
+  rules_group="${RULES_GROUP:-$group}"
   export TARGET MODE DIAG_PAUSE CHECK_NLL_TOL RESUME SEED RESULTS_ROOT
   echo ">> submitting ${#specs[@]} job(s), one A40 each:"
   for i in "${!specs[@]}"; do
@@ -142,15 +153,15 @@ if [ -z "${SLURM_JOB_ID:-}" ]; then
     done
     parse_job "$spec"
     jid=$(JOB="$spec" JOB_RUN_ID="${rid[$i]}" PARTNER_RUN_ID="$partner_id" PARTNER_JOB="$partner_spec" \
-          RULES_JOBS="$rules_list" RULES_GROUP="$group" \
+          RULES_JOBS="$rules_list" RULES_GROUP="$rules_group" \
           sbatch --parsable --account="$ACCOUNT" --job-name="kv-fetch-$suffix" --export=ALL "$0" "$@")
     echo "   $spec -> job $jid, run id ${rid[$i]}, $RESULTS_ROOT/gate_fetch/$name, log kv-fetch-$suffix-$jid.log"
     [ -n "$partner_id" ] && echo "      int3 join partner: $partner_spec (run id $partner_id)"
     echo "      resume: ACCOUNT=$ACCOUNT RESUME=1 RUN_ID=${rid[$i]} JOBS=\"$spec\"" \
          "${partner_id:+PARTNER_RUN_ID=$partner_id PARTNER_JOB=\"$partner_spec\" }" \
-         "${rules_list:+RULES_JOBS=\"$rules_list\" RULES_GROUP=$group }bash $0"
+         "${rules_list:+RULES_JOBS=\"$rules_list\" RULES_GROUP=$rules_group }bash $0"
   done
-  [ -n "$rules_list" ] && echo ">> decision rules over all run-5 jobs: $RESULTS_ROOT/gate_fetch/rules_run5_$group.md," \
+  [ -n "$rules_list" ] && echo ">> decision rules over all run-5 jobs ($rules_list): $RESULTS_ROOT/gate_fetch/rules_run5_$rules_group.md," \
                                "written by whichever job finishes last"
   exit 0
 fi

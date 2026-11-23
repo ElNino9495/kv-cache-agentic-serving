@@ -194,3 +194,12 @@ def test_uniform_k2v1_row_equals_independent_k2v1_cache(model, ids):
         kv.append((k2, v1))
     lp, _ = run_turn(model, lambda li: kv[li], len(kv), fresh_ids, tgt[:, :T])
     assert torch.allclose(lp.cpu(), res["logp"][3], atol=1e-4)
+
+
+def test_pool_k_above_M_is_reported_not_clamped(model, ids):
+    from experiments.gate.fetch_attn import resolve_rows
+    rows = [Row("ok", policy="s2_pool", k=4, pool=8), Row("bad", policy="s2_pool", k=16, pool=8)]
+    res, bad = resolve_rows(rows, P, B, 64, KVH, 16, L)
+    assert [r.k for r in res] == [4, 16] and len(bad) == 1 and bad[0].startswith("bad@16")
+    with pytest.raises(AssertionError, match="k > M"):
+        _run(model, ids, rows)

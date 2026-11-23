@@ -572,7 +572,9 @@ def rules_report(dirs, out: Path) -> str:
         parts += [(r, tag, ok, det, d.name) for r, tag, ok, det in ps]
         used.append(f"- {d.name}: row set {role[0]}, {role[1]} targets, base {base}, {len(s)} pauses"
                     + (f", run id {(d / 'run_id.txt').read_text().strip()}" if (d / "run_id.txt").exists() else ""))
-    need = {"R1": ["real", "self-T0.7"], "R2": ["real"], "R3": ["real"], "R4": ["real", "self-T0.7"]}
+    # rule -> {target tag: the job that decides it}; a rule whose job is not among the folders is PENDING
+    need = {"R1": {"real": "A1", "self-T0.7": "B1"}, "R2": {"real": "C"}, "R3": {"real": "A2"},
+            "R4": {"real": "A2", "self-T0.7": "B2"}}
     lines = ["# Fetch study run 5: pre-registered decision rules", "", "## Rules (verbatim)", ""] + \
             [f"- {t}" for t in RULES_TEXT] + ["", "## How they are tested", ""] + [f"- {t}" for t in RULES_HOW] + \
             ["", "## Jobs", ""] + used + ["", "## Verdicts", ""]
@@ -580,7 +582,7 @@ def rules_report(dirs, out: Path) -> str:
         got = {tag: (ok, det, name) for r, tag, ok, det, name in parts if r == rule}
         missing = [t for t in tags if t not in got]
         if missing:
-            verdict = f"INCOMPLETE (missing: {', '.join(missing)})"
+            verdict = "PENDING job " + " and ".join(tags[t] for t in missing)
         else:
             verdict = "PASS" if all(got[t][0] for t in tags) else "FAIL"
         lines.append(f"- **{rule}: {verdict}**")

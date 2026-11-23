@@ -144,8 +144,8 @@ def study_rows(row_set, base="int1", prefill=True, uniform_refs=(2,), s2_extra_k
           spec_chain_wtd{2,3} at 128 and match
       a2  pools and scoring keys: s2, oracle, s2_k2score, spec_chain at 16/64/128/match; s2_pool and spec_chain_pool
           at 16/64/128 with M = k_match and k_match // 2
-      c   base k2v1: s2, oracle, spec_chain at 16/64/128/match; spec_chain_wtd3 at 128/match; s2_pool at 16/64/128,
-          both M; int1-base comparators s2@16, oracle@16, s2@match (prefilled over int1 with the same prefill fetch)
+      c   base k2v1: s2, oracle, spec_chain at 16/64/128/match; spec_chain_wtd3 at 128/match; s2_pool at 16/64/128
+          with M = k_match and at 16/64 with M = k_match // 2; int1-base comparators s2@16, oracle@16, s2@match (prefilled over int1 with the same prefill fetch)
     Every set has bf16, the base, the uniform references, fetch_all, noise_ctrl (and fetch_all_noprefill)."""
     fr = "pf" if prefill else base
     rows = [Row("bf16", "bf16", "bf16"), Row(base, base, base)]
@@ -181,9 +181,10 @@ def study_rows(row_set, base="int1", prefill=True, uniform_refs=(2,), s2_extra_k
             rows += spec_family("spec_chain", "spec_chain", B, fr, k)
         for k in (128, MATCH):
             rows += spec_family("spec_chain_wtd3", "spec_chain_wtd", B, fr, k, 3)
-        for k in (16, 64, 128):
-            rows += [Row("s2_pool_Mmatch", B, fr, policy="s2_pool", k=k, pool=MATCH),
-                     Row("s2_pool_Mhalf", B, fr, policy="s2_pool", k=k, pool=HALF)]
+        # k2v1's k_match is ~half of int1's (min 247 over the 31 pauses, so M = k_match // 2 >= 123), below 128 on
+        # short pauses: s2_pool_Mhalf only at 16 / 64 (run_fetch checks k <= M on every pause before starting)
+        rows += [Row("s2_pool_Mmatch", B, fr, policy="s2_pool", k=k, pool=MATCH) for k in (16, 64, 128)]
+        rows += [Row("s2_pool_Mhalf", B, fr, policy="s2_pool", k=k, pool=HALF) for k in (16, 64)]
         f1 = "pf:int1" if prefill else "int1"
         rows += [Row("s2_int1base", "int1", f1, policy="s2", k=16), Row("oracle_int1base", "int1", f1, policy="oracle", k=16),
                  Row("s2_int1base", "int1", f1, policy="s2", k=MATCH)]
@@ -756,6 +757,38 @@ def generate_self_target(model, hist_ids, fresh_ids, max_new, temperature=0.0, s
     return out
 
 
+def pause_geometry(P, block, recent, kvh, d, n_layers):
+    """Middle (quantized) range [lo, hi), reload bytes per base, and k_match(base): the tokens per KV head and
+    layer that fill the base up to its uniform reference NEXT[base] (MATCH)."""
+    nb = P // block
+    n_recent = min(nb - 1, math.ceil(recent / block))
+    lo, hi = block, (nb - n_recent) * block
+    assert hi > lo, "history has no quantized middle blocks"
+    pair_bytes = 2 * d * 2
+    nbytes = {f"{b}_bytes": hist_bytes(b, P, lo, hi, block, kvh, d, n_layers) for b in ("int1", "int2", "int3", "k2v1")}
+    nbytes["bf16_bytes"] = P * kvh * d * 4 * n_layers
+
+    def kmatch(h):
+        return max(0, min(hi - lo, (nbytes[f"{NEXT[h]}_bytes"] - nbytes[f"{h}_bytes"]) // (kvh * n_layers * pair_bytes)))
+
+    return lo, hi, nbytes, kmatch
+
+
+def resolve_rows(rows, P, block, recent, kvh, d, n_layers):
+    """Rows with k = MATCH and pool = MATCH / HALF resolved for a history of P tokens (per row's base). Returns
+    (rows, problems): a pool row whose k exceeds its pool size M is a problem (never clamped)."""
+    lo, hi, _, kmatch = pause_geometry(P, block, recent, kvh, d, n_layers)
+    out, bad = [], []
+    for r in rows:
+        km = kmatch(r.hist) if (r.k == MATCH or r.pool in (MATCH, HALF)) else 0
+        k = km if r.k == MATCH else r.k
+        M = km if r.pool == MATCH else km // 2 if r.pool == HALF else r.pool
+        if r.policy in POOL and not r.shadow and not 0 < min(k, hi - lo) <= M:
+            bad.append(f"{r.name}@{'match' if r.k == MATCH else r.k}: pool size {M} below k = {k}")
+        out.append(dataclasses.replace(r, k=k, pool=M))
+    return out, bad
+
+
 @torch.no_grad()
 def run_pause(model, hist_ids, fresh_ids, target_ids, rows, block=16, recent=64, max_steps=64,
               check=False, diag=False, base_bits=2, prefill_k=0, prefill_chunk=64, base=None):
@@ -776,30 +809,14 @@ def run_pause(model, hist_ids, fresh_ids, target_ids, rows, block=16, recent=64,
     assert F_all >= 3, "tool output segment too short"
     T = min(max_steps, target_ids.shape[1])
     tgt = target_ids[:, :T]
-    nb = P // block
-    n_recent = min(nb - 1, math.ceil(recent / block))
-    lo, hi = block, (nb - n_recent) * block
-    assert hi > lo, "history has no quantized middle blocks"
     base = base or f"int{base_bits}"
     pair_bytes = 2 * d * 2  # K + V of one token, one KV head, one layer, bf16
-    nbytes = {f"{b}_bytes": hist_bytes(b, P, lo, hi, block, kvh, d, n_layers) for b in ("int1", "int2", "int3", "k2v1")}
-    nbytes["bf16_bytes"] = P * kvh * d * 4 * n_layers
-
-    def kmatch(h):
-        return max(0, min(hi - lo, (nbytes[f"{NEXT[h]}_bytes"] - nbytes[f"{h}_bytes"]) // (kvh * n_layers * pair_bytes)))
-
+    lo, hi, nbytes, kmatch = pause_geometry(P, block, recent, kvh, d, n_layers)
     k_match = kmatch(base)
     k_label = [("match" if r.k == MATCH else str(r.k)) for r in rows]
     pool_label = [("match" if r.pool == MATCH else "half" if r.pool == HALF else str(r.pool)) for r in rows]
-
-    def resolve(r):
-        km = kmatch(r.hist) if (r.k == MATCH or r.pool in (MATCH, HALF)) else 0
-        k = km if r.k == MATCH else r.k
-        M = km if r.pool == MATCH else km // 2 if r.pool == HALF else r.pool
-        assert r.policy not in POOL or 0 < min(k, hi - lo) <= M, f"{r.name}: pool size {M} below k = {k}"
-        return dataclasses.replace(r, k=k, pool=M)
-
-    rows = [resolve(r) for r in rows]
+    rows, bad = resolve_rows(rows, P, block, recent, kvh, d, n_layers)
+    assert not bad, "pool rows with k > M (no clamping; run_fetch checks every pause before starting): " + "; ".join(bad)
 
     cache, _ = prefill(model, hist_ids)
     K16 = [layer.keys[0] for layer in cache.layers]
